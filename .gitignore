@@ -1,0 +1,26 @@
+# Секретные файлы
+config.py
+*.log
+byse.log
+bot_state.json
+*.pkl
+*.keras
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Временные
+*.tmp
+*.temp
