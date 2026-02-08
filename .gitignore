@@ -24,3 +24,5 @@ env/
 # Временные
 *.tmp
 *.temp
+*.save
+*.save.*
