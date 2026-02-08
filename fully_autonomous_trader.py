@@ -26,12 +26,15 @@ class FullyAutonomousTrader:
         self.entry_price = None
         self.entry_time = None
         self.last_leverage_adjustment = 0
+        self.last_coin_change_time = 0  # ✨ НОВОЕ
+        self.price_history = []  # ✨ НОВОЕ
     
     async def autonomous_trading_cycle(self):
         """Основной цикл с автоматической сменой стратегий"""
         logger.info("🤖 Запуск полностью автономного торговца...")
         
         strategy_check_counter = 0
+        self.last_coin_change_time = asyncio.get_event_loop().time()  # ✨ НОВОЕ
         
         while True:
             try:
@@ -56,6 +59,75 @@ class FullyAutonomousTrader:
                         send_telegram_message(msg)
                     
                     strategy_check_counter = 0
+                
+                # ✨ НОВОЕ: ПРОВЕРКА ДВИЖЕНИЯ ЦЕНЫ И АВТОСМЕНА МОНЕТЫ
+                df = fetch_ohlcv_df()
+                if df is not None and len(df) > 0:
+                    current_price = df['close'].iloc[-1]
+                    self.price_history.append(current_price)
+                    
+                    # Храним только последние 30 значений (30 минут)
+                    if len(self.price_history) > 30:
+                        self.price_history.pop(0)
+                    
+                    # Проверяем каждые 30 минут
+                    current_time = asyncio.get_event_loop().time()
+                    time_since_change = (current_time - self.last_coin_change_time) / 60  # в минутах
+                    
+                    if time_since_change >= 30 and len(self.price_history) >= 30:
+                        # Рассчитываем волатильность за последние 30 минут
+                        price_range = max(self.price_history) - min(self.price_history)
+                        volatility_pct = (price_range / current_price) * 100
+                        
+                        logger.info(f"📊 Волатильность за 30 мин: {volatility_pct:.2f}%")
+                        
+                        # Если движение < 2% за 30 минут - меняем монету
+                        if volatility_pct < 2.0:
+                            logger.warning(
+                                f"⚠️ Нет движений 30 минут (волатильность {volatility_pct:.2f}%), "
+                                f"меняю монету"
+                            )
+                            
+                            from coin_selector import coin_selector
+                            from state_manager import state_manager
+                            
+                            best_coins = coin_selector.select_best_coins()
+                            if best_coins and len(best_coins) > 1:
+                                # Берём вторую монету (первая может быть текущая)
+                                coin_changed = False
+                                for coin in best_coins:
+                                    if coin['symbol'] != config.SYMBOL:
+                                        new_coin = coin['symbol']
+                                        old_coin = config.SYMBOL
+                                        
+                                        config.SYMBOL = new_coin
+                                        state_manager.set_symbol(new_coin)
+                                        
+                                        msg = f"""🔄 <b>АВТОСМЕНА МОНЕТЫ (НЕТ ДВИЖЕНИЯ)</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Старая: {old_coin}
+  └─ Волатильность: {volatility_pct:.2f}% (< 2%)
+  └─ Время без движений: 30 минут
+
+Новая: {new_coin}
+  └─ Score: {coin['potential_score']:.1f}/100
+  └─ Объём: ${coin['volume']:,.0f}
+  └─ Изменение 24ч: {coin['change_24h']:+.2f}%
+
+Причина: Нет активных движений"""
+                                        
+                                        send_telegram_message(msg)
+                                        logger.info(f"✅ Монета изменена: {old_coin} → {new_coin}")
+                                        
+                                        self.last_coin_change_time = current_time
+                                        self.price_history = []
+                                        coin_changed = True
+                                        break
+                                
+                                if not coin_changed:
+                                    logger.info(f"ℹ️ Текущая монета {config.SYMBOL} всё ещё лучшая")
+                                    self.last_coin_change_time = current_time
+                                    self.price_history = []
                 
                 # ПРОВЕРЯЕМ РЕЖИМ
                 if not mode_manager.is_autonomous_mode():
@@ -120,7 +192,7 @@ class FullyAutonomousTrader:
                         self.current_position = True
                     else:
                         logger.info(
-                            f"⏳ Ожида��ие лучших условий: "
+                            f"⏳ Ожидание лучших условий: "
                             f"уверенность {entry_conditions['confidence']}% "
                             f"(порог {entry_threshold}%)"
                         )
@@ -239,7 +311,7 @@ class FullyAutonomousTrader:
 ║ <b>P&L:</b> {upnl:+.4f} USDT
 ║ <b>Баланс:</b> ${total:.2f}
 ║ <b>Свободно:</b> ${free:.2f}
-╚════════════════════════════════════════════════════════════╝
+╚══════════════════════════���═════════════════════════════════╝
 """
         except Exception as e:
             logger.error(f"❌ Ошибка получения статуса: {e}")

@@ -79,7 +79,7 @@ class SmartSignalGenerator:
                         confidence_score += 10
                     elif rsi > 70:
                         conditions['reasons'].append("❌ RSI перекуплен")
-                        conditions['is_good_to_buy'] = False
+                        confidence_score += 0
                     else:
                         conditions['reasons'].append("⚠️ RSI нейтральный")
             except Exception as e:
@@ -99,7 +99,7 @@ class SmartSignalGenerator:
                         confidence_score += 10
                 else:
                     conditions['reasons'].append("❌ ML предсказывает падение")
-                    conditions['is_good_to_buy'] = False
+                    confidence_score += 0
             except Exception as e:
                 logger.debug(f"⚠️ Ошибка ансамбля: {e}")
                 conditions['reasons'].append("⚠️ ML анализ недоступен")
