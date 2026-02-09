@@ -484,9 +484,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='HTML')
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Статус торговли"""
+    """��татус торговли с подробной информацией"""
     try:
-        current_symbol = state_manager.get_symbol()  # ✨ ИСПОЛЬЗУЕТ state_manager
+        current_symbol = state_manager.get_symbol()
         
         free, total = get_balance_usdt()
         size, side, avg, upnl = get_position(current_symbol)
@@ -494,10 +494,40 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mode_text = "🤖 АВТОНОМНЫЙ" if mode_manager.is_autonomous_mode() else "🎮 РУЧНОЙ"
         trading_text = "📈 ФЬЮЧЕРСЫ" if mode_manager.is_futures_mode() else "💰 СПОТ"
         
+        # Стратегия
+        from strategy_manager import strategy_manager
+        strategy_name = strategy_manager.STRATEGIES[strategy_manager.current_strategy]['name']
+        
+        # Позиция с деталями
+        if size > 0 and avg > 0:
+            from exchange import fetch_ohlcv_df
+            df = fetch_ohlcv_df()
+            current_price = df['close'].iloc[-1] if df is not None and len(df) > 0 else avg
+            profit_pct = ((current_price - avg) / avg) * 100
+            position_value = size * current_price
+            
+            position_text = f"""<b>📍 Позиция:</b> {side} {size:.4f}
+  Цена входа: ${avg:.8f}
+  Текущая цена: ${current_price:.8f}
+  Размер: ${position_value:.2f}
+  <b>P&L: {profit_pct:+.2f}% (${upnl:+.4f})</b>"""
+            
+            if profit_pct > 0:
+                position_text += "\n  📈 В ПРИБЫЛИ"
+            else:
+                position_text += "\n  📉 В УБЫТКЕ"
+        else:
+            position_text = "<b>📍 Позиция:</b> НЕТ (ищу вход...)"
+        
+        # Трейдер
+        from fully_autonomous_trader import fully_autonomous_trader
+        waits = fully_autonomous_trader.consecutive_waits
+        
         msg = f"""<b>📊 Статус торговли</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-<b>Режим управления:</b> {mode_text}
-<b>Тип торговли:</b> {trading_text}
+<b>Режим:</b> {mode_text}
+<b>Тип:</b> {trading_text}
+<b>Стратегия:</b> {strategy_name}
 <b>Пара:</b> {current_symbol}
 <b>Торговля:</b> {'✅ ВКЛЮЧЕНА' if TRADING_STATE['enabled'] else '⏸️ НА ПАУЗЕ'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -505,8 +535,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
   Всего: ${total:.2f}
   Свободно: ${free:.2f}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-<b>📍 Позиция:</b> {side or 'НЕТ'} {size:.4f}
-<b>P&L:</b> ${upnl:+.2f}"""
+{position_text}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>⏳ Ожиданий входа:</b> {waits}"""
         
         await update.message.reply_text(msg, parse_mode='HTML')
     except Exception as e:

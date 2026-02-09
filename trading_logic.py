@@ -22,32 +22,45 @@ def place_buy(price=None, amount=None):
         if amount is None:
             amount = config.BASE_AMOUNT
         
-        # Рассчитываем количество монет
+        # Получаем текущую цену
         if price:
-            quantity = amount / price
+            current_price = price
         else:
             ticker = exchange.fetch_ticker(symbol)
-            price = ticker['last']
-            quantity = amount / price
+            current_price = ticker['last']
         
-        # Округляем
+        # Рассчитываем количество монет
+        quantity = float(amount) / current_price
+        
+        # Округляем по точности биржи
         market_info = exchange.market(symbol)
         precision = market_info['precision']['amount']
-        quantity = round(quantity, precision)
         
-        logger.info(f"💚 ПОКУПКА: {quantity} {symbol} @ ${price:.8f}")
+        # Точность может быть float или int — обрабатываем оба варианта
+        if isinstance(precision, float):
+            # Если точность — это шаг (например 0.01), вычисляем кол-во знаков
+            if precision < 1:
+                import math
+                decimal_places = max(0, -int(math.floor(math.log10(precision))))
+                quantity = round(quantity, decimal_places)
+            else:
+                quantity = round(quantity, int(precision))
+        else:
+            quantity = round(quantity, int(precision))
+        
+        # Проверяем минимальный размер ордера
+        min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 0)
+        if min_amount and quantity < min_amount:
+            logger.warning(f"⚠️ Количество {quantity} меньше минимума {min_amount}, увеличиваю")
+            quantity = min_amount
+        
+        logger.info(f"💚 ПОКУПКА: {quantity} {symbol} @ ${current_price:.8f} (сумма: ${float(amount):.2f})")
         
         # РЕАЛЬНЫЙ ОРДЕР
-        if mode_manager.is_futures_mode():
-            order = exchange.create_market_buy_order(
-                symbol=symbol,
-                amount=quantity
-            )
-        else:
-            order = exchange.create_market_buy_order(
-                symbol=symbol,
-                amount=quantity
-            )
+        order = exchange.create_market_buy_order(
+            symbol=symbol,
+            amount=quantity
+        )
         
         logger.info(f"✅ Ордер исполнен: ID {order['id']}")
         
@@ -55,7 +68,7 @@ def place_buy(price=None, amount=None):
         trade_db.log_trade(
             symbol=symbol,
             side='buy',
-            entry_price=price,
+            entry_price=current_price,
             amount=quantity,
             entry_time=datetime.now(),
             notes=f"Order ID: {order['id']}"
@@ -72,26 +85,34 @@ def place_sell(price=None, amount=None):
     try:
         symbol = state_manager.get_symbol()
         
-        # Если amount не указан - закрываем всю позицию
+        # Если amount не указан — закрываем всю позицию
         if amount is None:
             size, side, avg_price, upnl = get_position(symbol)
             if size == 0:
                 logger.warning("⚠️ Нет позиции для продажи")
                 return None
             quantity = size
-            price = price or 0  # Рыночная цена
         else:
-            if price:
-                quantity = amount / price
+            if price and price > 0:
+                quantity = float(amount) / price
             else:
                 ticker = exchange.fetch_ticker(symbol)
                 price = ticker['last']
-                quantity = amount / price
+                quantity = float(amount) / price
         
-        # Округляем
+        # Округляем по точности биржи
         market_info = exchange.market(symbol)
         precision = market_info['precision']['amount']
-        quantity = round(quantity, precision)
+        
+        if isinstance(precision, float):
+            if precision < 1:
+                import math
+                decimal_places = max(0, -int(math.floor(math.log10(precision))))
+                quantity = round(quantity, decimal_places)
+            else:
+                quantity = round(quantity, int(precision))
+        else:
+            quantity = round(quantity, int(precision))
         
         logger.info(f"💔 ПРОДАЖА: {quantity} {symbol} @ ${price:.8f}")
         
@@ -102,9 +123,6 @@ def place_sell(price=None, amount=None):
         )
         
         logger.info(f"✅ Ордер исполнен: ID {order['id']}")
-        
-        # Обновляем в БД (если есть открытая сделка)
-        # trade_db.update_trade_exit(...)
         
         return order
         
@@ -189,21 +207,21 @@ def calculate_signal_score(rsi, macd, macd_signal, sentiment, price_up,
     else:
         score -= 15
     
-    # Sentiment
+    # Сентимент
     if sentiment == "Buy":
         score += 10
     elif sentiment == "Sell":
         score -= 10
     
-    # Price direction
+    # Направление цены
     if price_up:
         score += 10
     
-    # Market activity
+    # Активность рынка
     if is_active:
         score += 10
     
-    # Volume
+    # Объём
     if volume_ratio > 1.5:
         score += 10
     
@@ -223,7 +241,7 @@ def check_market_activity_detailed(df):
         if df is None or len(df) < 20:
             return False, 0, 0, 0
         
-        # Volume
+        # Объём
         volume_ma = df['volume'].rolling(window=config.VOLUME_MA_PERIOD).mean()
         current_volume = df['volume'].iloc[-1]
         avg_volume = volume_ma.iloc[-1]
@@ -238,11 +256,11 @@ def check_market_activity_detailed(df):
         atr = true_range.rolling(config.ATR_PERIOD).mean()
         current_atr = atr.iloc[-1] if not pd.isna(atr.iloc[-1]) else 0
         
-        # Price change
+        # Изменение цены
         recent_close = df['close'].iloc[-10:] if len(df) >= 10 else df['close']
         price_change_pct = ((recent_close.iloc[-1] - recent_close.iloc[0]) / recent_close.iloc[0] * 100) if len(recent_close) > 0 else 0
         
-        # Activity check
+        # Проверка активности
         is_active = (
             volume_ratio > config.MIN_VOLUME_RATIO and
             current_atr > 0 and

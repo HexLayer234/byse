@@ -84,9 +84,13 @@ class BacktestEngine:
             df_current = df.iloc[:i+1].copy()
             
             # Вычисляем индикаторы
-            rsi, macd, macd_signal = compute_indicators(df_current)
-            if rsi is None:
+            indicators = compute_indicators(df_current)
+            if indicators is None:
                 continue
+
+            rsi = indicators['rsi']
+            macd = indicators['macd']
+            macd_signal = indicators['macd_signal']
             
             # Активность рынка
             is_active, volume_ratio, atr, price_change = check_market_activity_detailed_backtest(df_current)
@@ -301,7 +305,12 @@ def check_market_activity_detailed_backtest(df):
         avg_volume = df['volume_ma'].iloc[-1]
         volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
         
-        atr = df.ta.atr(length=ATR_PERIOD)
+        high_low = df['high'] - df['low']
+        high_close = abs(df['high'] - df['close'].shift())
+        low_close = abs(df['low'] - df['close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = ranges.max(axis=1)
+        atr = true_range.rolling(ATR_PERIOD).mean()
         current_atr = atr.iloc[-1] if not pd.isna(atr.iloc[-1]) else 0
         
         recent_close = df['close'].iloc[-10:] if len(df) >= 10 else df['close']

@@ -3,6 +3,7 @@
 ИИ анализирует все доступные монеты и выбирает самые перспективные
 """
 
+import time
 import logging
 import pandas as pd
 import numpy as np
@@ -99,20 +100,25 @@ class CoinSelector:
     def rank_coins(self, coins):
         """Ранжирует монеты по потенциалу"""
         logger.info(f"🎯 Ранжирую {len(coins)} монет по потенциалу...")
-        
+    
         ranked_coins = []
-        
-        for coin in coins:
+    
+        for i, coin in enumerate(coins):
             symbol = coin['symbol']
             potential = self.analyze_coin_potential(symbol)
-            
+        
             ranked_coins.append({
                 'symbol': symbol,
                 'potential_score': potential,
                 'volume': coin['volume'],
                 'price': coin['price'],
                 'change_24h': coin['change_24h']
-            })
+        })
+        
+        # Задержка каждые 10 монет для предотвращения рейтлимита
+            if (i + 1) % 10 == 0:
+                time.sleep(0.5)
+                logger.debug(f"📊 Обработано {i+1}/{len(coins)} монет...")
         
         # Сортируем по потенциалу
         ranked_coins.sort(key=lambda x: x['potential_score'], reverse=True)

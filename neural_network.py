@@ -31,14 +31,20 @@ class LSTMTradingModel:
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.model = None
         self.is_trained = False
+        self.trained_symbol = None  # ✨ НОВОЕ: запоминаем на какой монете обучена
         
         # Пути для сохранения
         self.model_dir = 'models'
         os.makedirs(self.model_dir, exist_ok=True)
         
-        clean_symbol = SYMBOL.replace("/", "_").replace(":", "_")
+        self._update_paths(SYMBOL)
+    
+    def _update_paths(self, symbol):
+        """Обновляет пути к файлам модели для текущего символа"""
+        clean_symbol = symbol.replace("/", "_").replace(":", "_")
         self.model_path = f'{self.model_dir}/{clean_symbol}_lstm_model.keras'
-        self.scaler_path = f'{self.model_dir}/{clean_symbol}_scaler.pkl'  # ✨ НОВОЕ!
+        self.scaler_path = f'{self.model_dir}/{clean_symbol}_scaler.pkl'
+        self.trained_symbol = symbol
         
     def prepare_data(self, df):
         """Подготовить данные для LSTM"""
@@ -49,7 +55,7 @@ class LSTMTradingModel:
             
             features = df[['close', 'volume', 'high', 'low']].values
             
-            # Нормализуем И СОХРАНЯЕМ scaler!
+            # Нормализуем И СОХРАНЯЕМ scaler
             scaled_features = self.scaler.fit_transform(features)
             
             X, y = [], []
@@ -143,7 +149,7 @@ class LSTMTradingModel:
             
             self.is_trained = True
             self.save_model()
-            self.save_scaler()  # ✨ СОХРАНЯЕМ SCALER!
+            self.save_scaler()
             return True
             
         except Exception as e:
@@ -160,7 +166,7 @@ class LSTMTradingModel:
             if df is None or len(df) < self.lookback:
                 return None, None, None
             
-            # Используем загруженный scaler!
+            # Используем загруженный scaler
             features = df[['close', 'volume', 'high', 'low']].values
             scaled_features = self.scaler.transform(features)
             
@@ -219,7 +225,7 @@ class LSTMTradingModel:
             logging.error(f"❌ Ошибка сохранения модели: {e}")
     
     def save_scaler(self):
-        """✨ НОВОЕ: Сохранить scaler отдельно"""
+        """Сохранить scaler отдельно"""
         try:
             with open(self.scaler_path, 'wb') as f:
                 pickle.dump(self.scaler, f)
@@ -231,7 +237,7 @@ class LSTMTradingModel:
         """Загрузить модель с диска"""
         try:
             self.model = load_model(self.model_path)
-            self.load_scaler()  # ✨ ЗАГРУЖАЕМ SCALER!
+            self.load_scaler()
             self.is_trained = True
             logging.info(f"✅ Модель загружена: {self.model_path}")
             return True
@@ -240,13 +246,57 @@ class LSTMTradingModel:
             return False
     
     def load_scaler(self):
-        """✨ НОВОЕ: Загрузить scaler"""
+        """Загрузить scaler"""
         try:
             with open(self.scaler_path, 'rb') as f:
                 self.scaler = pickle.load(f)
             logging.info(f"✅ Scaler загружен: {self.scaler_path}")
         except Exception as e:
             logging.warning(f"⚠️ Не удалось загрузить scaler: {e}")
+    
+    def switch_symbol(self, new_symbol):
+        """
+        ✨ НОВОЕ: Переключает LSTM на новую монету
+        Загружает существующую модель или обучает новую
+        """
+        if new_symbol == self.trained_symbol and self.is_trained:
+            logging.info(f"ℹ️ LSTM уже обучена на {new_symbol}, переобучение не требуется")
+            return True
+        
+        logging.info(f"🔄 Переключение LSTM: {self.trained_symbol} → {new_symbol}")
+        
+        # Обновляем пути для новой монеты
+        self._update_paths(new_symbol)
+        
+        # Сбрасываем состояние
+        self.model = None
+        self.is_trained = False
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        
+        # Пробуем загрузить сохранённую модель для этой монеты
+        if self.load_model():
+            logging.info(f"✅ Загружена сохранённая LSTM модель для {new_symbol}")
+            return True
+        
+        # Нет сохранённой модели — обучаем новую
+        logging.info(f"🧠 Обучение новой LSTM модели для {new_symbol}...")
+        
+        try:
+            from exchange import exchange
+            candles = exchange.fetch_ohlcv(new_symbol, '1h', limit=500)
+            
+            if candles and len(candles) >= 100:
+                df = pd.DataFrame(candles, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
+                df['ts'] = pd.to_datetime(df['ts'], unit='ms')
+                return self.train(df, epochs=30)
+            else:
+                logging.warning(f"⚠️ Недостаточно данных для обучения LSTM на {new_symbol}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"❌ Ошибка обучения LSTM для {new_symbol}: {e}")
+            return False
+
 
 # Глобальный экземпляр модели
 lstm_model = None
@@ -256,7 +306,7 @@ def init_lstm_model():
     global lstm_model
     
     if not NEURAL_NETWORK_AVAILABLE:
-        logging.warning("❌ TensorFlow не установлена, LSTM отк��ючена")
+        logging.warning("❌ TensorFlow не установлена, LSTM отключена")
         return False
     
     try:
@@ -276,6 +326,18 @@ def init_lstm_model():
     except Exception as e:
         logging.error(f"❌ Ошибка инициализации LSTM: {e}")
         return False
+
+def switch_lstm_symbol(new_symbol):
+    """✨ НОВОЕ: Переключить LSTM на новую монету"""
+    global lstm_model
+    
+    if lstm_model is None:
+        if not NEURAL_NETWORK_AVAILABLE:
+            logging.warning("❌ TensorFlow не установлена, LSTM отключена")
+            return False
+        lstm_model = LSTMTradingModel(lookback=60, forecast_horizon=12)
+    
+    return lstm_model.switch_symbol(new_symbol)
 
 def get_lstm_prediction():
     """Получить предсказание от LSTM"""

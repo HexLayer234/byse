@@ -21,80 +21,80 @@ class StrategyManager:
             'name': '🐌 УЛЬТРА-КОНСЕРВАТИВНАЯ',
             'leverage': 1,
             'risk_per_trade': 0.5,
-            'position_size': 0.2,  # 20% баланса
+            'position_size': 0.2,
             'stop_loss': 2.0,
             'take_profit': 5.0,
-            'entry_threshold': 80,  # Нужна высокая уверенность
+            'entry_threshold': 55,  # Было 80 → стало 55
             'description': 'Минимальный риск, долгосрочные позиции'
         },
         'CONSERVATIVE': {
             'name': '🛡️ КОНСЕРВАТИВНАЯ',
             'leverage': 3,
             'risk_per_trade': 1.0,
-            'position_size': 0.3,  # 30% баланса
+            'position_size': 0.3,
             'stop_loss': 2.5,
             'take_profit': 8.0,
-            'entry_threshold': 70,
+            'entry_threshold': 50,  # Было 70 → стало 50
             'description': 'Низкий риск, стабильная торговля'
         },
         'BALANCED': {
             'name': '⚖️ СБАЛАНСИРОВАННАЯ',
             'leverage': 10,
             'risk_per_trade': 2.0,
-            'position_size': 0.5,  # 50% баланса
-            'stop_loss': 3.0,
-            'take_profit': 12.0,
-            'entry_threshold': 60,
+            'position_size': 0.5,
+            'stop_loss': 2.0,
+            'take_profit': 5.0,
+            'entry_threshold': 40,
             'description': 'Средний риск/прибыль'
         },
         'MODERATE_AGGRESSIVE': {
             'name': '💪 УМЕРЕННО-АГРЕССИВНАЯ',
             'leverage': 20,
             'risk_per_trade': 3.0,
-            'position_size': 0.7,  # 70% баланса
+            'position_size': 0.7,
             'stop_loss': 4.0,
             'take_profit': 18.0,
-            'entry_threshold': 55,
+            'entry_threshold': 40,  # Было 55 → стало 40
             'description': 'Выше риск, больше прибыль'
         },
         'AGGRESSIVE': {
             'name': '🔥 АГРЕССИВНАЯ',
-            'leverage': 30,
-            'risk_per_trade': 4.0,
-            'position_size': 0.8,  # 80% баланса
-            'stop_loss': 5.0,
-            'take_profit': 25.0,
-            'entry_threshold': 50,
+            'leverage': 20,
+            'risk_per_trade': 3.0,
+            'position_size': 0.7,
+            'stop_loss': 2.0,
+            'take_profit': 5.0,
+            'entry_threshold': 35,
             'description': 'Высокий риск, быстрая прибыль'
         },
         'ULTRA_AGGRESSIVE': {
             'name': '🚀 УЛЬТРА-АГРЕССИВНАЯ',
             'leverage': 50,
             'risk_per_trade': 5.0,
-            'position_size': 0.9,  # 90% баланса
+            'position_size': 0.9,
             'stop_loss': 7.0,
             'take_profit': 35.0,
-            'entry_threshold': 45,
+            'entry_threshold': 30,  # Было 45 → стало 30
             'description': 'Максимальный риск и прибыль'
         },
         'SCALPING': {
             'name': '⚡ СКАЛЬПИНГ',
             'leverage': 15,
             'risk_per_trade': 2.5,
-            'position_size': 0.6,  # 60% баланса
+            'position_size': 0.6,
             'stop_loss': 1.0,
-            'take_profit': 2.0,
-            'entry_threshold': 50,
+            'take_profit': 2.5,
+            'entry_threshold': 30,
             'description': 'Быстрые сделки, маленький профит'
         },
         'SWING': {
             'name': '📈 СВИНГ-ТРЕЙДИНГ',
             'leverage': 5,
             'risk_per_trade': 1.5,
-            'position_size': 0.4,  # 40% баланса
+            'position_size': 0.4,
             'stop_loss': 5.0,
             'take_profit': 20.0,
-            'entry_threshold': 65,
+            'entry_threshold': 45,  # Было 65 → ст��ло 45
             'description': 'Среднесрочные позиции'
         }
     }
@@ -123,7 +123,7 @@ class StrategyManager:
         try:
             data = {
                 'current_strategy': self.current_strategy,
-                'history': self.strategy_history[-100:],  # Последние 100 записей
+                'history': self.strategy_history[-100:],
                 'timestamp': datetime.now().isoformat()
             }
             with open(self.history_file, 'w') as f:
@@ -203,10 +203,13 @@ class StrategyManager:
     def select_optimal_strategy(self, market_conditions, performance_stats=None):
         """
         Выбирает оптимальную стратегию на основе условий рынка
+        
+        ✨ УЛУЧШЕНО: Медвежий рынок → КОНСЕРВАТИВНАЯ вместо УЛЬТРА-КОНСЕРВАТИВНОЙ
+        Бот должен торговать, а не стоять. Защита через размер позиции и стоп-лосс.
         """
         try:
             if market_conditions is None:
-                return self.current_strategy
+                return self.current_strategy, "Нет данных о рынке"
             
             volatility = market_conditions['volatility']
             trend = market_conditions['trend']
@@ -222,61 +225,76 @@ class StrategyManager:
             logger.info(f"   Тип рынка: {market_type}")
             logger.info(f"   Изменение 24ч: {price_change:+.2f}%")
             
-            # ЛОГИКА ВЫБОРА СТРАТЕГИИ
+            # === ЛОГИКА ВЫБОРА СТРАТЕГИИ ===
             
-            # 1. НИЗКАЯ ВОЛАТИЛЬНОСТЬ → КОНСЕРВАТИВНО
-            if volatility < 1.0:
-                recommended = 'CONSERVATIVE'
-                reason = "Низкая волатильность → консервативный подход"
-            
-            # 2. СИЛЬНЫЙ ВОСХОДЯЩИЙ ТРЕНД + ВЫСОКИЙ ОБЪЁМ → АГРЕССИВНО
-            elif trend == 'STRONG_UPTREND' and volume_ratio > 1.5:
+            # 1. СИЛЬНЫЙ ВОСХОДЯЩИЙ ТРЕНД + ВЫСОКИЙ ОБЪЁМ → АГРЕССИВНО
+            if trend == 'STRONG_UPTREND' and volume_ratio > 1.5:
                 recommended = 'AGGRESSIVE'
                 reason = "Сильный бычий тренд + высокий объём → агрессивная торговля"
+            
+            # 2. ОЧЕНЬ ВЫСОКАЯ ВОЛАТИЛЬНОСТЬ + СИЛЬНЫЙ ТРЕНД → УЛЬТРА-АГРЕССИВНО
+            elif volatility > 5.0 and trend_score > 70:
+                recommended = 'ULTRA_AGGRESSIVE'
+                reason = "Экстремальная волатильность + бычий тренд → максимальный риск"
             
             # 3. ВЫСОКАЯ ВОЛАТИЛЬНОСТЬ + ВОСХОДЯЩИЙ ТРЕНД → УМЕРЕННО-АГРЕССИВНО
             elif volatility > 3.0 and trend_score > 50:
                 recommended = 'MODERATE_AGGRESSIVE'
                 reason = "Высокая волатильность + бычий тренд → умеренно-агрессивно"
             
-            # 4. ОЧЕНЬ ВЫСОКАЯ ВОЛАТИЛЬНОСТЬ (>5%) + СИЛЬНЫЙ ТРЕНД → УЛЬТРА-АГРЕССИВНО
-            elif volatility > 5.0 and abs(trend_score) > 70:
-                recommended = 'ULTRA_AGGRESSIVE'
-                reason = "Экстремальная волатильность + сильный тренд → максимальный риск"
+            # 4. СРЕДНЯЯ ВОЛАТИЛЬНОСТЬ + ТРЕНД → СВИНГ
+            elif 2.0 < volatility < 4.0 and abs(trend_score) > 50:
+                recommended = 'SWING'
+                reason = "Умеренная волатильн��сть + тренд → свинг-трейдинг"
             
-            # 5. ОЧЕНЬ НИЗКАЯ ВОЛАТИЛЬНОСТЬ + ФЛЭТ → СКАЛЬПИНГ
+            # 5. НИЗКАЯ ВОЛАТИЛЬНОСТЬ + ФЛЭТ → СКАЛЬПИНГ
             elif volatility < 1.5 and trend == 'RANGING':
                 recommended = 'SCALPING'
                 reason = "Низкая волатильность + флэт → скальпинг"
             
-            # 6. СРЕДНЯЯ ВОЛАТИЛЬНОСТЬ + ТРЕНД → СВИНГ
-            elif 2.0 < volatility < 4.0 and abs(trend_score) > 50:
-                recommended = 'SWING'
-                reason = "Умеренная волатильность + тренд → свинг-трейдинг"
+            # 6. НИЗКАЯ ВОЛАТИЛЬНОСТЬ → КОНСЕРВАТИВНО
+            elif volatility < 1.0:
+                recommended = 'CONSERVATIVE'
+                reason = "Низкая волатильность → консервативный подход"
             
-            # 7. НИСХОДЯЩИЙ ТРЕНД → УЛЬТРА-КОНСЕРВАТИВНО или НЕ ТОРГОВАТЬ
+            # 7. СИЛЬНЫЙ НИСХОДЯЩИЙ ТРЕНД → КОНСЕРВАТИВНО (НЕ ультра!)
+            elif trend == 'STRONG_DOWNTREND':
+                recommended = 'CONSERVATIVE'
+                reason = "Сильный медвежий рынок → консервативный подход (с торговлей)"
+            
+            # 8. НИСХОДЯЩИЙ ТРЕНД → СБАЛАНСИРОВАННО
             elif trend_score < -50:
-                recommended = 'ULTRA_CONSERVATIVE'
-                reason = "Медвежий рынок → минимальный риск"
+                recommended = 'BALANCED'
+                reason = "Медвежий рынок → сбалансированная стратегия (осторожно)"
             
-            # 8. ДЕФОЛТ → СБАЛАНСИРОВАННАЯ
+            # 9. ВЫСОКАЯ ВОЛАТИЛЬНОСТЬ + МЕДВЕЖИЙ ТРЕНД → СКАЛЬПИНГ
+            elif volatility > 3.0 and trend_score < -30:
+                recommended = 'SCALPING'
+                reason = "Высокая волатильность + медвежий тренд → быстрые сделки"
+            
+            # 10. ДЕФОЛТ → СБАЛАНСИРОВАННАЯ
             else:
                 recommended = 'BALANCED'
                 reason = "Нормальные условия → сбалансированная стратегия"
             
-            # Учитываем производительность
+            # === КОРРЕКТИРОВКА ПО ПРОИЗВОДИТЕЛЬНОСТИ ===
             if performance_stats:
                 win_rate = performance_stats.get('win_rate', 50)
+                total_trades = performance_stats.get('total_trades', 0)
                 
-                # Если win rate низкий - понижаем агрессивность
-                if win_rate < 40 and recommended in ['ULTRA_AGGRESSIVE', 'AGGRESSIVE']:
-                    recommended = 'BALANCED'
-                    reason += " | Низкий win rate → снижаем риск"
-                
-                # Если win rate высокий - можем повысить агрессивность
-                elif win_rate > 70 and recommended == 'BALANCED':
-                    recommended = 'MODERATE_AGGRESSIVE'
-                    reason += " | Высокий win rate → увеличиваем риск"
+                # Только если достаточно сделок для статистики
+                if total_trades >= 10:
+                    if win_rate < 35 and recommended in ['ULTRA_AGGRESSIVE', 'AGGRESSIVE', 'MODERATE_AGGRESSIVE']:
+                        recommended = 'BALANCED'
+                        reason += " | Низкий win rate → снижаем риск"
+                    
+                    elif win_rate > 65 and recommended in ['CONSERVATIVE', 'ULTRA_CONSERVATIVE']:
+                        recommended = 'BALANCED'
+                        reason += " | Высокий win rate → повышаем агрессивность"
+                    
+                    elif win_rate > 75 and recommended == 'BALANCED':
+                        recommended = 'MODERATE_AGGRESSIVE'
+                        reason += " | Отличный win rate → увеличиваем позицию"
             
             logger.info(f"🎯 Рекомендуемая стратегия: {self.STRATEGIES[recommended]['name']}")
             logger.info(f"   Причина: {reason}")
@@ -297,7 +315,6 @@ class StrategyManager:
             old_strategy = self.current_strategy
             self.current_strategy = new_strategy
             
-            # Сохраняем в историю
             self.strategy_history.append({
                 'timestamp': datetime.now().isoformat(),
                 'from': old_strategy,
@@ -306,8 +323,6 @@ class StrategyManager:
             })
             
             self.save_history()
-            
-            # Применяем параметры стратегии
             self._apply_strategy_params(new_strategy)
             
             logger.info(f"🔄 Стратегия изменена: {old_strategy} → {new_strategy}")
@@ -389,7 +404,7 @@ class StrategyManager:
             is_current = "✅" if key == self.current_strategy else "⚪"
             info += f"{is_current} <b>{strategy['name']}</b>\n"
             info += f"   Плечо: {strategy['leverage']}x | Риск: {strategy['risk_per_trade']}%\n"
-            info += f"   {strategy['description']}\n\n"
+            info += f"   Порог: {strategy['entry_threshold']}% | {strategy['description']}\n\n"
         
         return info
 

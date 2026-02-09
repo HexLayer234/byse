@@ -38,9 +38,13 @@ class MultiTimeframeAnalyzer:
         if df is None or len(df) < 50:
             return None
         
-        rsi, macd, macd_signal = compute_indicators(df)
-        if rsi is None:
-            return None
+        indicators = compute_indicators(df)
+        if indicators is None:
+           return None
+
+        rsi = indicators['rsi']
+        macd = indicators['macd']
+        macd_signal = indicators['macd_signal']
         
         signal = {
             'rsi': rsi,
