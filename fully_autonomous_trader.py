@@ -301,19 +301,35 @@ class FullyAutonomousTrader:
                                 'timestamp': datetime.now().isoformat()
                             }
                             
-                            if entry_conditions['is_good_to_buy'] and entry_conditions['confidence'] >= entry_threshold:
-                                # Делим баланс между позициями
+                            # Также проверяем SHORT сигнал
+                            is_entry = (
+                                (entry_conditions.get('is_good_to_buy') and entry_conditions['confidence'] >= entry_threshold) or
+                                (entry_conditions.get('is_good_to_short') and entry_conditions['confidence'] >= entry_threshold)
+                            )
+                            entry_direction = entry_conditions.get('direction', 'LONG')
+                            
+                            if is_entry:
+                                # Делим баланс только между СВОБОДНЫМИ слотами
+                                free_slots = max(self.max_coins - open_count, 1)
                                 position_size_usdt = auto_balance_manager.calculate_safe_position_size(sym)
-                                position_size_usdt = position_size_usdt / max(self.max_coins, 1)
+                                position_size_usdt = position_size_usdt / free_slots
                                 
                                 state_manager.set_symbol(sym)
-                                await self._execute_entry(entry_conditions['entry_price'], position_size_usdt)
+                                
+                                pos_side = 'short' if entry_direction == 'SHORT' else 'long'
+                                
+                                if pos_side == 'short':
+                                    from trading_logic import place_short
+                                    config.BASE_AMOUNT = int(position_size_usdt)
+                                    order = place_short(entry_conditions['entry_price'])
+                                else:
+                                    await self._execute_entry(entry_conditions['entry_price'], position_size_usdt)
                                 
                                 self.positions[sym] = {
                                     'entry_price': entry_conditions['entry_price'],
                                     'entry_time': datetime.now(),
                                     'size': 0,
-                                    'side': 'long'
+                                    'side': pos_side
                                 }
                                 trailing_stop_manager.register_position(sym, entry_conditions['entry_price'])
                                 
@@ -323,8 +339,9 @@ class FullyAutonomousTrader:
                                 open_count += 1
                                 entered_this_cycle = True
                                 
+                                side_icon = '🔴 SHORT' if pos_side == 'short' else '🟢 LONG'
                                 send_telegram_message(
-                                    f"🟢 <b>ВХОД [{open_count}/{self.max_coins}]</b>\n"
+                                    f"{side_icon} <b>ВХОД [{open_count}/{self.max_coins}]</b>\n"
                                     f"Монета: {sym}\n"
                                     f"Цена: ${entry_conditions['entry_price']:.8f}\n"
                                     f"Размер: ${position_size_usdt:.2f}\n"
