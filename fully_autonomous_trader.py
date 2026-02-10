@@ -71,23 +71,23 @@ class FullyAutonomousTrader:
                     current_price = df['close'].iloc[-1]
                     self.price_history.append(current_price)
                     
-                    if len(self.price_history) > 30:
+                    if len(self.price_history) > 15:
                         self.price_history.pop(0)
                     
                     current_time = asyncio.get_event_loop().time()
                     time_since_change = (current_time - self.last_coin_change_time) / 60
                     
-                    # Смена монеты только когда НЕТ открытой позиции
+                    # Смена монеты когда НЕТ открытой позиции — проверяем чаще
                     size, _, _, _ = get_position()
-                    if time_since_change >= 30 and len(self.price_history) >= 30 and size == 0:
+                    if time_since_change >= 15 and len(self.price_history) >= 10 and size == 0:
                         price_range = max(self.price_history) - min(self.price_history)
                         volatility_pct = (price_range / current_price) * 100
                         
-                        logger.info(f"📊 Волатильность за 30 мин: {volatility_pct:.2f}%")
+                        logger.info(f"📊 Волатильность за {int(time_since_change)} мин: {volatility_pct:.2f}%")
                         
-                        if volatility_pct < 2.0:
+                        if volatility_pct < 1.5:
                             logger.warning(
-                                f"⚠️ Нет движений 30 минут (волатильность {volatility_pct:.2f}%), "
+                                f"⚠️ Нет движений {int(time_since_change)} мин (волатильность {volatility_pct:.2f}%), "
                                 f"меняю монету"
                             )
                             
@@ -382,8 +382,8 @@ class FullyAutonomousTrader:
                     if not entered_this_cycle:
                         self.consecutive_waits += 1
                     
-                    # Смена монет при долгом ожидании (каждые 2 часа)
-                    if self.consecutive_waits >= 120 and self.consecutive_waits % 120 == 0:
+                    # Смена монет при долгом ожидании (каждые 30 минут)
+                    if self.consecutive_waits >= 30 and self.consecutive_waits % 30 == 0:
                         try:
                             best_coins = coin_selector.select_best_coins()
                             if best_coins:
