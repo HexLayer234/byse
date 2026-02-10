@@ -79,7 +79,11 @@ class EnsemblePredictor:
             return None, None, None
     
     def get_xgboost_prediction(self) -> Tuple[float, float, float]:
-        """Получает предсказание от XGBoost (упрощённый вариант)"""
+        """
+        Получает предсказание от линейной экстраполяции тренда.
+        ПРИМЕЧАНИЕ: Это НЕ настоящий XGBoost, а упрощённая линейная модель.
+        TODO: Заменить на реальный XGBoost/LightGBM с фичами индикаторов.
+        """
         try:
             df = fetch_ohlcv_df()
             if df is None or len(df) < 20:
@@ -95,7 +99,7 @@ class EnsemblePredictor:
             return predicted, lower, upper
         
         except Exception as e:
-            logger.warning(f"⚠️ Ошибка предсказания XGBoost: {e}")
+            logger.warning(f"⚠️ Ошибка предсказания линейной модели: {e}")
             return None, None, None
     
     def get_ensemble_prediction(self) -> Dict:

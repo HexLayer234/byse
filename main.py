@@ -203,9 +203,27 @@ async def main():
     try:
         await asyncio.gather(trading_task, optimization_task, bot_task)
     
-    except KeyboardInterrupt:
-        logger.info("⏹ Остановка...")
-        send_telegram_message("🛑 BYSE остановлен")
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("⏹ Остановка бота...")
+        send_telegram_message("🛑 BYSE останавливается...")
+        
+        # Проверяем открытые позиции перед выходом
+        try:
+            from exchange import get_position, has_open_position
+            import config
+            size, side, avg, upnl = get_position()
+            if size > 0:
+                logger.warning(f"⚠️ Открытая позиция при выходе: {side} {size:.4f} {config.SYMBOL} (P&L: ${upnl:+.4f})")
+                send_telegram_message(
+                    f"⚠️ <b>ВНИМАНИЕ!</b> Бот остановлен с открытой позицией!\n"
+                    f"Пара: {config.SYMBOL}\n"
+                    f"Сторона: {side} {size:.4f}\n"
+                    f"P&L: ${upnl:+.4f}\n"
+                    f"Закройте позицию вручную или перезапустите бота!"
+                )
+        except Exception as e:
+            logger.error(f"⚠️ Ошибка проверки позиции при выходе: {e}")
+        
         trading_task.cancel()
         optimization_task.cancel()
         bot_task.cancel()
@@ -213,10 +231,14 @@ async def main():
             await asyncio.gather(trading_task, optimization_task, bot_task, return_exceptions=True)
         except:
             pass
+        
+        send_telegram_message("🛑 BYSE остановлен")
         sys.exit(0)
     
     except Exception as e:
         logger.critical(f"❌ Критическая ошибка: {e}")
+        import traceback
+        logger.critical(traceback.format_exc())
         send_telegram_message(f"🛑 BYSE УПАЛ: {e}")
         sys.exit(1)
 

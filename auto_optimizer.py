@@ -76,11 +76,11 @@ class AutoOptimizer:
                         'rsi_overbought': overbought
                     }
                     
-                    # Здесь можно добавить бэктест
+                    # TODO: Реализовать реальный бэктест для каждой конфигурации
                     # total_return = self.backtest_config(config)
                     
-                    # Упрощённая оценка
-                    total_return = np.random.uniform(-5, 20)  # Временно
+                    # ВНИМАНИЕ: Пока используется случайная оценка — ЗАМЕНИТЬ на бэктест!
+                    total_return = np.random.uniform(-5, 20)
                     
                     if total_return > best_return:
                         best_return = total_return
@@ -111,6 +111,7 @@ class AutoOptimizer:
                     'min_volume_ratio': ratio
                 }
                 
+                # TODO: Реализовать реальный бэктест — пока рандом!
                 total_return = np.random.uniform(-5, 20)
                 
                 if total_return > best_return:
@@ -147,6 +148,7 @@ class AutoOptimizer:
                         'macd_signal': signal
                     }
                     
+                    # TODO: Реализовать реальный бэктест — пока рандом!
                     total_return = np.random.uniform(-5, 20)
                     
                     if total_return > best_return:
