@@ -29,9 +29,10 @@ TRADING_MODE = "FUTURES"  # "FUTURES" или "SPOT"
 
 # ===== ТОРГОВЛЯ =====
 
-SYMBOL = "ETH/USDT:USDT"  # Для фьючерсов
+SYMBOL = "ETH/USDT:USDT"  # Для фьючерсов (основная монета)
 BASE_AMOUNT = 1000  # USDT на сделку
 LEVERAGE = 1  # Плечо
+MAX_COINS = 2  # Сколько монет торговать одновременно
 
 # ===== РЕЖИМЫ =====
 

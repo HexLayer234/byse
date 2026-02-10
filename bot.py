@@ -516,7 +516,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Статус торговли с подробной информацией"""
+    """Статус торговли с ИИ-аналитикой и прогнозом времени"""
     try:
         current_symbol = state_manager.get_symbol()
         
@@ -528,32 +528,157 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Стратегия
         from strategy_manager import strategy_manager
-        strategy_name = strategy_manager.STRATEGIES[strategy_manager.current_strategy]['name']
-        
-        # Позиция с деталями
-        if size > 0 and avg > 0:
-            from exchange import fetch_ohlcv_df
-            df = fetch_ohlcv_df()
-            current_price = df['close'].iloc[-1] if df is not None and len(df) > 0 else avg
-            profit_pct = ((current_price - avg) / avg) * 100
-            position_value = size * current_price
-            
-            position_text = f"""<b>📍 Позиция:</b> {side} {size:.4f}
-  Цена входа: ${avg:.8f}
-  Текущая цена: ${current_price:.8f}
-  Размер: ${position_value:.2f}
-  <b>P&L: {profit_pct:+.2f}% (${upnl:+.4f})</b>"""
-            
-            if profit_pct > 0:
-                position_text += "\n  📈 В ПРИБЫЛИ"
-            else:
-                position_text += "\n  📉 В УБЫТКЕ"
-        else:
-            position_text = "<b>📍 Позиция:</b> НЕТ (ищу вход...)"
+        strategy = strategy_manager.STRATEGIES[strategy_manager.current_strategy]
+        strategy_name = strategy['name']
+        tp = strategy['take_profit']
+        sl = strategy['stop_loss']
+        entry_threshold = strategy['entry_threshold']
+        strategy_leverage = strategy['leverage']
         
         # Трейдер
         from fully_autonomous_trader import fully_autonomous_trader
         waits = fully_autonomous_trader.consecutive_waits
+        
+        # ИИ-анализ
+        from smart_signals import smart_signal_generator
+        from exchange import fetch_ohlcv_df
+        df = fetch_ohlcv_df()
+        current_price = df['close'].iloc[-1] if df is not None and len(df) > 0 else 0
+        
+        # Позиция с деталями + прогноз выхода
+        if size > 0 and avg > 0:
+            profit_pct = ((current_price - avg) / avg) * 100
+            position_value = size * current_price
+            
+            # Прогноз времени выхода на основе ИИ
+            distance_to_tp = tp - profit_pct
+            distance_to_sl = sl + profit_pct
+            
+            # Оцениваем скорость изменения цены
+            if df is not None and len(df) >= 10:
+                recent = df['close'].tail(10)
+                avg_move_per_hour = abs(recent.pct_change().mean()) * 100  # % за свечу
+                if avg_move_per_hour > 0:
+                    hours_to_tp = abs(distance_to_tp) / avg_move_per_hour
+                    hours_to_sl = abs(distance_to_sl) / avg_move_per_hour
+                else:
+                    hours_to_tp = 999
+                    hours_to_sl = 999
+            else:
+                hours_to_tp = 999
+                hours_to_sl = 999
+            
+            # Ансамбль прогноз
+            try:
+                from ensemble_predictor import ensemble_predictor
+                ensemble = ensemble_predictor.get_ensemble_prediction()
+                ai_direction = ensemble.get('direction', '—') if ensemble else '—'
+                ai_confidence = ensemble.get('confidence', 0) if ensemble else 0
+                ai_price = ensemble.get('ensemble_price', 0) if ensemble else 0
+            except:
+                ai_direction = '—'
+                ai_confidence = 0
+                ai_price = 0
+            
+            # Прогноз от LSTM
+            try:
+                from neural_network import get_lstm_prediction
+                lstm_price, _, _ = get_lstm_prediction()
+            except:
+                lstm_price = None
+            
+            position_text = f"""<b>📍 Позиция:</b> {side} {size:.4f}
+  Цена входа: ${avg:.8f}
+  Текущая: ${current_price:.8f}
+  Размер: ${position_value:.2f}
+  <b>P&L: {profit_pct:+.2f}% (${upnl:+.4f})</b>
+  {'📈 В ПРИБЫЛИ' if profit_pct > 0 else '📉 В УБЫТКЕ'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>🎯 Прогноз выхода (ИИ):</b>
+  TP ({tp}%): ~{hours_to_tp:.1f}ч (до +${avg * tp / 100:.4f})
+  SL (-{sl}%): ~{hours_to_sl:.1f}ч (до -${avg * sl / 100:.4f})
+  Скорость цены: {avg_move_per_hour:.3f}%/свечу"""
+            
+            if ai_price and ai_price > 0:
+                ai_profit = ((ai_price - avg) / avg) * 100
+                position_text += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>🧠 ИИ-ансамбль:</b>
+  Направление: {ai_direction}
+  Уверенность: {ai_confidence:.0%}
+  Прогноз цены: ${ai_price:.8f} ({ai_profit:+.2f}%)"""
+            
+            if lstm_price and lstm_price > 0:
+                lstm_profit = ((lstm_price - avg) / avg) * 100
+                position_text += f"\n  LSTM прогноз: ${lstm_price:.8f} ({lstm_profit:+.2f}%)"
+        
+        else:
+            # Нет позиции — показываем ИИ-анализ для входа
+            try:
+                entry_conditions = smart_signal_generator.analyze_entry_conditions(current_symbol)
+                confidence = entry_conditions.get('confidence', 0)
+                is_good = entry_conditions.get('is_good_to_buy', False)
+                reasons = entry_conditions.get('reasons', [])
+                
+                # Оценка времени до входа
+                if confidence >= entry_threshold:
+                    time_est = "⚡ СЕЙЧАС (сигнал готов)"
+                elif confidence >= entry_threshold - 10:
+                    time_est = "~5-15 мин"
+                elif confidence >= entry_threshold - 20:
+                    time_est = "~15-60 мин"
+                elif confidence >= 20:
+                    time_est = "~1-3 часа"
+                else:
+                    time_est = "~3+ часа (слабый сигнал)"
+                
+                # Ансамбль
+                try:
+                    from ensemble_predictor import ensemble_predictor
+                    ensemble = ensemble_predictor.get_ensemble_prediction()
+                    ai_direction = ensemble.get('direction', '—') if ensemble else '—'
+                    ai_confidence = ensemble.get('confidence', 0) if ensemble else 0
+                    ai_price = ensemble.get('ensemble_price', 0) if ensemble else 0
+                except:
+                    ai_direction = '—'
+                    ai_confidence = 0
+                    ai_price = 0
+                
+                progress_bar = '█' * (confidence // 10) + '░' * (10 - confidence // 10)
+                
+                position_text = f"""<b>📍 Позиция:</b> НЕТ (ищу вход)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>🧠 ИИ-анализ входа:</b>
+  Уверенность: {confidence}% [{progress_bar}]
+  Порог входа: {entry_threshold}% (стратегия)
+  Готовность: {'✅ ГОТОВ' if is_good else '⏳ ЖДЁМ'}
+  <b>⏱ Прогноз входа: {time_est}</b>"""
+                
+                if ai_price and ai_price > 0:
+                    position_text += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>🧠 ИИ-ансамбль:</b>
+  Направление: {ai_direction}
+  Уверенность ансамбля: {ai_confidence:.0%}
+  Прогноз цены: ${ai_price:.8f}"""
+                
+                if reasons:
+                    position_text += "\n\n<b>📋 Факторы:</b>"
+                    for r in reasons[:6]:
+                        position_text += f"\n  {r}"
+            
+            except Exception as e:
+                position_text = f"<b>📍 Позиция:</b> НЕТ\n  ⚠️ Ошибка ИИ-анализа: {e}"
+        
+        # Мультимонетный статус
+        from fully_autonomous_trader import fully_autonomous_trader
+        open_positions = fully_autonomous_trader.positions
+        max_coins = fully_autonomous_trader.max_coins
+        multi_text = f"\n<b>🪙 Монеты:</b> {len(open_positions)}/{max_coins} слотов"
+        if open_positions:
+            for sym, pdata in open_positions.items():
+                ep = pdata.get('entry_price', 0)
+                multi_text += f"\n  • {sym} @ ${ep:.6f}"
         
         msg = f"""<b>📊 Статус торговли</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -561,11 +686,13 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>Тип:</b> {trading_text}
 <b>Стратегия:</b> {strategy_name}
 <b>Пара:</b> {current_symbol}
+<b>Плечо:</b> {strategy_leverage}x
 <b>Торговля:</b> {'✅ ВКЛЮЧЕНА' if TRADING_STATE['enabled'] else '⏸️ НА ПАУЗЕ'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 <b>💰 Баланс:</b>
   Всего: ${total:.2f}
   Свободно: ${free:.2f}
+{multi_text}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {position_text}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
