@@ -199,14 +199,14 @@ class SmartSignalGenerator:
             if bearish_block:
                 # Сильный медвежий тренд — сигнал на SHORT
                 conditions['is_good_to_buy'] = False
-                conditions['is_good_to_short'] = confidence_score <= -35
+                conditions['is_good_to_short'] = abs(confidence_score) >= 20
                 conditions['direction'] = 'SHORT'
                 conditions['reasons'].append("🔴 Сильный медвежий тренд → SHORT сигнал")
-            elif confidence_score >= 35:
+            elif confidence_score >= 20:
                 conditions['is_good_to_buy'] = True
                 conditions['is_good_to_short'] = False
                 conditions['direction'] = 'LONG'
-            elif confidence_score <= -35:
+            elif confidence_score <= -20:
                 conditions['is_good_to_buy'] = False
                 conditions['is_good_to_short'] = True
                 conditions['direction'] = 'SHORT'

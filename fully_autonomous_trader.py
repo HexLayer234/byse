@@ -285,10 +285,10 @@ class FullyAutonomousTrader:
                             )
                             entry_threshold = current_strategy.get('entry_threshold', 45)
                             
-                            # Адаптивное снижение
-                            if self.consecutive_waits > 10:
-                                reduction = min((self.consecutive_waits - 10) // 10 * 3, 15)
-                                entry_threshold = max(30, entry_threshold - reduction)
+                            # Адаптивное снижение — быстрее и агрессивнее
+                            if self.consecutive_waits > 5:
+                                reduction = min((self.consecutive_waits - 5) // 3 * 3, 20)
+                                entry_threshold = max(15, entry_threshold - reduction)
                             
                             # Сохраняем результат анализа для /status
                             self.last_analysis[sym] = {
