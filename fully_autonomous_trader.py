@@ -34,6 +34,7 @@ class FullyAutonomousTrader:
         # Мультимонетная торговля — позиции по каждой монете
         self.positions = {}  # {symbol: {entry_price, entry_time, size, side}}
         self.max_coins = getattr(config, 'MAX_COINS', 2)
+        self.last_analysis = {}  # {symbol: {confidence, direction, reasons, timestamp}}
     
     async def autonomous_trading_cycle(self):
         """Основной цикл с автоматической сменой стратегий"""
@@ -288,6 +289,17 @@ class FullyAutonomousTrader:
                             if self.consecutive_waits > 10:
                                 reduction = min((self.consecutive_waits - 10) // 10 * 3, 15)
                                 entry_threshold = max(30, entry_threshold - reduction)
+                            
+                            # Сохраняем результат анализа для /status
+                            self.last_analysis[sym] = {
+                                'confidence': entry_conditions.get('confidence', 0),
+                                'direction': entry_conditions.get('direction', 'NEUTRAL'),
+                                'is_good_to_buy': entry_conditions.get('is_good_to_buy', False),
+                                'is_good_to_short': entry_conditions.get('is_good_to_short', False),
+                                'reasons': entry_conditions.get('reasons', []),
+                                'entry_threshold': entry_threshold,
+                                'timestamp': datetime.now().isoformat()
+                            }
                             
                             if entry_conditions['is_good_to_buy'] and entry_conditions['confidence'] >= entry_threshold:
                                 # Делим баланс между позициями

@@ -674,11 +674,40 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from fully_autonomous_trader import fully_autonomous_trader
         open_positions = fully_autonomous_trader.positions
         max_coins = fully_autonomous_trader.max_coins
+        last_analysis = fully_autonomous_trader.last_analysis
+        
         multi_text = f"\n<b>🪙 Монеты:</b> {len(open_positions)}/{max_coins} слотов"
         if open_positions:
             for sym, pdata in open_positions.items():
                 ep = pdata.get('entry_price', 0)
                 multi_text += f"\n  • {sym} @ ${ep:.6f}"
+        
+        # Показываем ИИ-анализ по ВСЕМ анализируемым монетам
+        if last_analysis:
+            multi_text += f"\n\n<b>🔍 ИИ-анализ монет:</b>"
+            for sym, analysis in last_analysis.items():
+                conf = analysis.get('confidence', 0)
+                direction = analysis.get('direction', '—')
+                threshold = analysis.get('entry_threshold', 45)
+                is_buy = analysis.get('is_good_to_buy', False)
+                is_short = analysis.get('is_good_to_short', False)
+                
+                bar = '█' * (conf // 10) + '░' * (10 - conf // 10)
+                
+                if is_buy:
+                    status = "✅ LONG"
+                elif is_short:
+                    status = "🔴 SHORT"
+                else:
+                    status = "⏳ ЖДЁМ"
+                
+                multi_text += f"\n\n  <b>{sym}</b>"
+                multi_text += f"\n  [{bar}] {conf}%/{threshold}%"
+                multi_text += f"\n  {status} | {direction}"
+                
+                reasons = analysis.get('reasons', [])
+                for r in reasons[:3]:
+                    multi_text += f"\n  {r}"
         
         msg = f"""<b>📊 Статус торговли</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
