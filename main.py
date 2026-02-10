@@ -180,6 +180,18 @@ async def main():
         else:
             send_telegram_message(f"⚠️ LSTM не удалось инициализировать для {config.SYMBOL}")
         
+        # 🌳 Инициализация XGBoost
+        logger.info(f"🌳 Инициализация XGBoost для {config.SYMBOL}...")
+        try:
+            from xgboost_model import init_xgboost
+            xgb_ok = init_xgboost()
+            if xgb_ok:
+                send_telegram_message(f"✅ XGBoost инициализирован для {config.SYMBOL}")
+            else:
+                logger.warning(f"⚠️ XGBoost не удалось инициализировать для {config.SYMBOL}")
+        except Exception as e:
+            logger.warning(f"⚠️ XGBoost: {e}")
+        
         logger.info("🔧 Подстройка плеча...")
         auto_leverage_manager.auto_adjust_leverage(config.SYMBOL)
         

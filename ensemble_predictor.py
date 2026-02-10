@@ -80,26 +80,42 @@ class EnsemblePredictor:
     
     def get_xgboost_prediction(self) -> Tuple[float, float, float]:
         """
-        Получает предсказание от линейной экстраполяции тренда.
-        ПРИМЕЧАНИЕ: Это НЕ настоящий XGBoost, а упрощённая линейная модель.
-        TODO: Заменить на реальный XGBoost/LightGBM с фичами индикаторов.
+        Реальный XGBoost/GradientBoosting на 25 технических фичах:
+        RSI, MACD, ATR, Bollinger, EMA, объём, волатильность, время.
+        Фолбэк на линейную экстраполяцию если модель недоступна.
         """
         try:
+            from xgboost_model import get_xgb_prediction, xgb_predictor
+            
+            # Пробуем реальный XGBoost
+            if xgb_predictor.is_trained:
+                predicted, lower, upper = get_xgb_prediction()
+                if predicted is not None:
+                    return predicted, lower, upper
+            
+            # Инициализируем если ещё не обучен
+            if not xgb_predictor.is_trained:
+                from xgboost_model import init_xgboost
+                init_xgboost()
+                predicted, lower, upper = get_xgb_prediction()
+                if predicted is not None:
+                    return predicted, lower, upper
+            
+            # Фолбэк — линейная экстраполяция
+            logger.debug("⚠️ XGBoost недоступен, фолбэк на линейную модель")
             df = fetch_ohlcv_df()
             if df is None or len(df) < 20:
                 return None, None, None
             
             prices = df['close'].values[-20:]
             trend = (prices[-1] - prices[0]) / len(prices)
-            
             predicted = prices[-1] + trend * 12
             lower = predicted * 0.98
             upper = predicted * 1.02
-            
             return predicted, lower, upper
         
         except Exception as e:
-            logger.warning(f"⚠️ Ошибка предсказания линейной модели: {e}")
+            logger.warning(f"⚠️ Ошибка XGBoost: {e}")
             return None, None, None
     
     def get_ensemble_prediction(self) -> Dict:

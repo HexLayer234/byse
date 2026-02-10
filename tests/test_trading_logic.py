@@ -235,5 +235,85 @@ def test_trailing_stop_triggers():
     assert stats['status'] == 'СРАБОТАЛ'
 
 
+# ===== ТЕСТЫ XGBOOST =====
+
+def test_xgboost_build_features():
+    """XGBoost должен построить фичи из DataFrame"""
+    from xgboost_model import XGBoostPredictor
+    xgb = XGBoostPredictor(forecast_horizon=12)
+    df = _make_df(100)
+    features = xgb._build_features(df)
+    
+    assert features is not None
+    assert len(features) == 100
+    assert 'rsi' in features.columns
+    assert 'macd' in features.columns
+    assert 'volume_ratio' in features.columns
+    assert 'ema9_diff' in features.columns
+    assert len(features.columns) >= 20, f"Ожидалось 20+ фичей, получили {len(features.columns)}"
+
+def test_xgboost_build_features_insufficient():
+    """При недостаточных данных должен вернуть None"""
+    from xgboost_model import XGBoostPredictor
+    xgb = XGBoostPredictor()
+    df = _make_df(10)
+    features = xgb._build_features(df)
+    assert features is None
+
+def test_xgboost_train_and_predict():
+    """XGBoost должен обучиться и предсказать"""
+    from xgboost_model import XGBoostPredictor, _check_xgboost
+    
+    if not _check_xgboost():
+        pytest.skip("XGBoost/sklearn не установлен")
+    
+    xgb = XGBoostPredictor(forecast_horizon=5)
+    df = _make_df(200, base_price=50)
+    
+    success = xgb.train(df, symbol='TEST')
+    assert success == True
+    assert xgb.is_trained == True
+    
+    predicted, lower, upper = xgb.predict(df)
+    assert predicted is not None
+    assert lower is not None
+    assert upper is not None
+    assert lower <= predicted <= upper
+    assert predicted > 0
+
+def test_xgboost_feature_importance():
+    """XGBoost должен вернуть важность фичей"""
+    from xgboost_model import XGBoostPredictor, _check_xgboost
+    
+    if not _check_xgboost():
+        pytest.skip("XGBoost/sklearn не установлен")
+    
+    xgb = XGBoostPredictor(forecast_horizon=5)
+    df = _make_df(200)
+    xgb.train(df, symbol='TEST')
+    
+    importance = xgb.get_feature_importance()
+    assert isinstance(importance, dict)
+    assert len(importance) > 0
+    
+    # Топ фича должна иметь значение > 0
+    top_feature = list(importance.keys())[0]
+    assert importance[top_feature] > 0
+
+def test_xgboost_direction():
+    """predict_direction должен вернуть -1, 0 или 1"""
+    from xgboost_model import XGBoostPredictor, _check_xgboost
+    
+    if not _check_xgboost():
+        pytest.skip("XGBoost/sklearn не установлен")
+    
+    xgb = XGBoostPredictor(forecast_horizon=5)
+    df = _make_df(200)
+    xgb.train(df, symbol='TEST')
+    
+    direction = xgb.predict_direction(df)
+    assert direction in [-1, 0, 1]
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
