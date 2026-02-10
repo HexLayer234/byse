@@ -72,10 +72,22 @@ class GridTradingBot:
                 f"   Всего: ${total_grid_usdt:.2f}"
             )
             
-            # Сетка покупки (ниже центра)
+            from trading_logic import _round_quantity, _round_price
+            from exchange import exchange as _exchange
+            
+            # Сетка покупки (ниже центра) — РЕАЛЬНЫЕ лимитные ордера
             for i in range(1, self.grid_levels + 1):
                 buy_price = center_price * (1 - (self.grid_step_percent / 100) * i)
-                amount = self.grid_size_usdt / buy_price
+                buy_price = _round_price(_exchange, self.symbol, buy_price)
+                amount = _round_quantity(_exchange, self.symbol, self.grid_size_usdt / buy_price)
+                
+                order_id = None
+                try:
+                    order = _exchange.create_limit_buy_order(self.symbol, amount, buy_price)
+                    order_id = order['id']
+                    logger.info(f"🟢 Grid LONG #{i}: {amount} @ ${buy_price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Grid LONG #{i} ошибка: {e}")
                 
                 self.buy_orders[buy_price] = {
                     'price': buy_price,
@@ -83,13 +95,23 @@ class GridTradingBot:
                     'usdt': self.grid_size_usdt,
                     'level': i,
                     'status': 'ОЖИДАНИЕ',
-                    'filled': False
+                    'filled': False,
+                    'order_id': order_id
                 }
             
-            # Сетка продажи (выше центра)
+            # Сетка продажи (выше центра) — РЕАЛЬНЫЕ лимитные ордера
             for i in range(1, self.grid_levels + 1):
                 sell_price = center_price * (1 + (self.grid_step_percent / 100) * i)
-                amount = self.grid_size_usdt / center_price
+                sell_price = _round_price(_exchange, self.symbol, sell_price)
+                amount = _round_quantity(_exchange, self.symbol, self.grid_size_usdt / center_price)
+                
+                order_id = None
+                try:
+                    order = _exchange.create_limit_sell_order(self.symbol, amount, sell_price)
+                    order_id = order['id']
+                    logger.info(f"🔴 Grid SHORT #{i}: {amount} @ ${sell_price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Grid SHORT #{i} ошибка: {e}")
                 
                 self.sell_orders[sell_price] = {
                     'price': sell_price,
@@ -97,7 +119,8 @@ class GridTradingBot:
                     'usdt': self.grid_size_usdt,
                     'level': i,
                     'status': 'ОЖИДАНИЕ',
-                    'filled': False
+                    'filled': False,
+                    'order_id': order_id
                 }
             
             self.is_active = True

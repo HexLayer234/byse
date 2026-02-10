@@ -1,0 +1,21 @@
+# Основные
+ccxt>=4.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+python-telegram-bot>=20.0
+requests>=2.28.0
+
+# ИИ/ML
+tensorflow>=2.15.0
+scikit-learn>=1.3.0
+prophet>=1.1.0
+
+# NLP (опционально — для анализа новостей)
+# transformers>=4.30.0
+# torch>=2.0.0
+
+# БД
+# sqlite3 встроен в Python
+
+# Прочее
+aiohttp>=3.8.0
