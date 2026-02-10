@@ -88,30 +88,27 @@ class TradeDatabase:
                   reason=None, risk_amount=None, position_size=None, notes=None):
         """Логирует сделку"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
             duration = None
             if exit_time and entry_time:
                 duration = int((exit_time - entry_time).total_seconds())
             
             status = 'CLOSED' if exit_price is not None else 'OPEN'
             
-            cursor.execute('''
-                INSERT INTO trades (
-                    timestamp, symbol, side, entry_price, exit_price, amount,
-                    pnl, pnl_percent, entry_time, exit_time, duration_seconds,
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO trades (
+                        timestamp, symbol, side, entry_price, exit_price, amount,
+                        pnl, pnl_percent, entry_time, exit_time, duration_seconds,
+                        reason, risk_amount, position_size, status, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    datetime.now(), symbol, side, entry_price, exit_price, amount,
+                    pnl, pnl_percent, entry_time, exit_time, duration,
                     reason, risk_amount, position_size, status, notes
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                datetime.now(), symbol, side, entry_price, exit_price, amount,
-                pnl, pnl_percent, entry_time, exit_time, duration,
-                reason, risk_amount, position_size, status, notes
-            ))
-            
-            conn.commit()
-            conn.close()
+                ))
+                conn.commit()
             
             logger.info(f"📝 Trade logged: {side} {amount:.4f} {symbol} @ {entry_price:.8f}")
         
@@ -121,18 +118,15 @@ class TradeDatabase:
     def update_trade_exit(self, trade_id, exit_price, exit_time, pnl, pnl_percent, reason=None):
         """Обновляет выход из сделки"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                UPDATE trades
-                SET exit_price = ?, exit_time = ?, pnl = ?, pnl_percent = ?,
-                    status = 'CLOSED', reason = ?
-                WHERE id = ?
-            ''', (exit_price, exit_time, pnl, pnl_percent, reason, trade_id))
-            
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE trades
+                    SET exit_price = ?, exit_time = ?, pnl = ?, pnl_percent = ?,
+                        status = 'CLOSED', reason = ?
+                    WHERE id = ?
+                ''', (exit_price, exit_time, pnl, pnl_percent, reason, trade_id))
+                conn.commit()
             
             logger.info(f"✏️ Trade {trade_id} updated: exit @ {exit_price:.8f}")
         
@@ -142,16 +136,13 @@ class TradeDatabase:
     def log_balance(self, balance, free, used):
         """Логирует баланс"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO balance_history (timestamp, balance, free, used)
-                VALUES (?, ?, ?, ?)
-            ''', (datetime.now(), balance, free, used))
-            
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO balance_history (timestamp, balance, free, used)
+                    VALUES (?, ?, ?, ?)
+                ''', (datetime.now(), balance, free, used))
+                conn.commit()
         
         except Exception as e:
             logger.error(f"❌ Balance logging error: {e}")
@@ -160,22 +151,19 @@ class TradeDatabase:
                    sentiment=None, lstm_direction=None, notes=None):
         """Логирует торговый сигнал"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO signals (
-                    timestamp, symbol, signal_type, score,
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO signals (
+                        timestamp, symbol, signal_type, score,
+                        rsi, macd, sentiment, lstm_direction, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    datetime.now(), symbol, signal_type, score,
                     rsi, macd, sentiment, lstm_direction, notes
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                datetime.now(), symbol, signal_type, score,
-                rsi, macd, sentiment, lstm_direction, notes
-            ))
-            
-            conn.commit()
-            conn.close()
+                ))
+                conn.commit()
         
         except Exception as e:
             logger.error(f"❌ Signal logging error: {e}")
@@ -186,14 +174,18 @@ class TradeDatabase:
             conn = sqlite3.connect(self.db_path)
             
             query = 'SELECT * FROM trades WHERE status = "CLOSED"'
+            params = []
+            
             if symbol:
-                query += f" AND symbol = '{symbol}'"
+                query += " AND symbol = ?"
+                params.append(symbol)
             if days:
-                query += f" AND exit_time >= datetime('now', '-{days} days')"
+                query += " AND exit_time >= datetime('now', ? || ' days')"
+                params.append(f"-{int(days)}")
             
             query += ' ORDER BY exit_time DESC'
             
-            df = pd.read_sql_query(query, conn)
+            df = pd.read_sql_query(query, conn, params=params)
             conn.close()
             
             return df

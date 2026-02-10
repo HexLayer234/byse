@@ -145,17 +145,23 @@ class ModeManager:
         
         logger.info(f"🔄 Режим торговли изменён: {old_mode} → {self.trading_mode}")
         
-        # Обновляем конфиг
+        # Обновляем конфиг — НЕ сбрасываем текущий символ!
         import config
         config.TRADING_MODE = self.trading_mode
         config.MODE = self.trading_mode.lower()
         
+        # Конвертируем текущий символ в правильный формат
+        current_symbol = config.SYMBOL
+        base_symbol = current_symbol.replace(':USDT', '').replace('/USDT', '')
+        
         if self.trading_mode == "FUTURES":
             config.LEVERAGE = 20
-            config.SYMBOL = "ETH/USDT:USDT"
+            config.SYMBOL = f"{base_symbol}/USDT:USDT"
         else:  # SPOT
             config.LEVERAGE = 1
-            config.SYMBOL = "ETH/USDT"
+            config.SYMBOL = f"{base_symbol}/USDT"
+        
+        logger.info(f"📊 Символ обновлён: {current_symbol} → {config.SYMBOL}")
         
         return True
     

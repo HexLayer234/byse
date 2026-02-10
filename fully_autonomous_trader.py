@@ -334,11 +334,12 @@ class FullyAutonomousTrader:
                 profit = (price - self.entry_price) / self.entry_price * 100
             
             if order:
+                entry_display = self.entry_price if self.entry_price else 0
                 msg = f"""🔴 <b>АВТОМАТИЧЕСКИЙ ВЫХОД</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 Пара: {config.SYMBOL}
 Тип: {exit_type}
-Цена входа: ${self.entry_price:.8f if self.entry_price else 0:.8f}
+Цена входа: ${entry_display:.8f}
 Цена выхода: ${price:.8f}
 Прибыль: {profit:+.2f}%
 Время: {datetime.now().strftime('%H:%M:%S')}"""
@@ -355,20 +356,21 @@ class FullyAutonomousTrader:
             
             # Для частичного выхода передаём конкретное количество
             from state_manager import state_manager
+            from exchange import exchange as _exchange
+            import math
+            
             symbol = state_manager.get_symbol()
             
-            market_info = exchange.market(symbol)
+            market_info = _exchange.market(symbol)
             precision = market_info['precision']['amount']
             
             if isinstance(precision, float) and precision < 1:
-                import math
                 decimal_places = max(0, -int(math.floor(math.log10(precision))))
                 amount = round(amount, decimal_places)
             else:
                 amount = round(amount, int(precision))
             
-            from exchange import exchange
-            order = exchange.create_market_sell_order(symbol=symbol, amount=amount)
+            order = _exchange.create_market_sell_order(symbol=symbol, amount=amount)
             
             if order:
                 msg = f"""⚪ <b>ЧАСТИЧНЫЙ ВЫХОД</b>
@@ -406,6 +408,7 @@ class FullyAutonomousTrader:
             entry = self.entry_price if self.entry_price else avg
             profit_pct = ((avg - entry) / entry * 100) if entry and entry > 0 and size > 0 else 0
             
+            entry_display = entry if entry else 0
             return f"""
 ╔════════════════════════════════════════════════════════════╗
 ║           📊 СТАТУС ТРЕЙДЕРА                               ║
@@ -414,7 +417,7 @@ class FullyAutonomousTrader:
 ║ <b>Стратегия:</b> {strategy_text}
 ║ <b>Пара:</b> {config.SYMBOL}
 ║ <b>Позиция:</b> {side or 'НЕТ'} {size:.4f}
-║ <b>Вход:</b> ${entry:.8f if entry else 0:.8f}
+║ <b>Вход:</b> ${entry_display:.8f}
 ║ <b>P&L:</b> {upnl:+.4f} USDT ({profit_pct:+.2f}%)
 ║ <b>Баланс:</b> ${total:.2f}
 ║ <b>Свободно:</b> ${free:.2f}

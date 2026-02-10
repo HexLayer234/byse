@@ -85,6 +85,11 @@ def place_sell(price=None, amount=None):
     try:
         symbol = state_manager.get_symbol()
         
+        # Получаем текущую цену если не указана
+        if price is None or price <= 0:
+            ticker = exchange.fetch_ticker(symbol)
+            price = ticker['last']
+        
         # Если amount не указан — закрываем всю позицию
         if amount is None:
             size, side, avg_price, upnl = get_position(symbol)
@@ -93,12 +98,7 @@ def place_sell(price=None, amount=None):
                 return None
             quantity = size
         else:
-            if price and price > 0:
-                quantity = float(amount) / price
-            else:
-                ticker = exchange.fetch_ticker(symbol)
-                price = ticker['last']
-                quantity = float(amount) / price
+            quantity = float(amount) / price
         
         # Округляем по точности биржи
         market_info = exchange.market(symbol)

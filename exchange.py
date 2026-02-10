@@ -2,11 +2,11 @@ import ccxt
 import logging
 import pandas as pd
 import time
-from config import API_KEY, API_SECRET, MODE, SYMBOL
+from config import API_KEY, API_SECRET, MODE, SYMBOL, EXCHANGE as EXCHANGE_NAME
 from telegram_utils import send_telegram_message
 
-# Создаём exchange с синхронизацией времени
-exchange = ccxt.bybit({
+# Создаём exchange на основе конфигурации
+_exchange_config = {
     'apiKey': API_KEY,
     'secret': API_SECRET,
     'enableRateLimit': True,
@@ -15,7 +15,15 @@ exchange = ccxt.bybit({
         'defaultContractType': 'linear',
         'recvWindow': 10000,
     },
-})
+}
+
+# Поддержка разных бирж из конфига
+_exchange_class = getattr(ccxt, EXCHANGE_NAME.lower(), None)
+if _exchange_class is None:
+    logging.warning(f"⚠️ Биржа '{EXCHANGE_NAME}' не найдена в ccxt, используем bybit")
+    _exchange_class = ccxt.bybit
+
+exchange = _exchange_class(_exchange_config)
 
 def sync_time_with_exchange():
     """Синхронизация времени клиента с сервером биржи"""
@@ -83,7 +91,7 @@ def fetch_ohlcv_df():
     try:
         from config import SYMBOL, TIMEFRAME, OHLCV_LIMIT
         symbol_for_fetch = SYMBOL if ':USDT' in SYMBOL else SYMBOL + ':USDT'
-        candles = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME, limit=OHLCV_LIMIT)
+        candles = exchange.fetch_ohlcv(symbol_for_fetch, timeframe=TIMEFRAME, limit=OHLCV_LIMIT)
         df = pd.DataFrame(candles, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
         df['ts'] = pd.to_datetime(df['ts'], unit='ms')
         return df
@@ -106,7 +114,7 @@ def get_balance_usdt():
 def safe_float(value, default=0.0):
     """Безопасно преобразует значение в float"""
     try:
-        if value is None or value == '' or value == '':
+        if value is None or value == '':
             return default
         return float(value)
     except (ValueError, TypeError):
@@ -115,11 +123,12 @@ def safe_float(value, default=0.0):
 def get_position(symbol=None):
     """Получить информацию о позиции (size, side, avg_price, unrealized_pnl)"""
     try:
-        from config import SYMBOL, MODE
+        from config import SYMBOL as DEFAULT_SYMBOL, MODE
         if MODE != 'futures':
             return 0, None, 0, 0
         
-        clean_symbol = SYMBOL.replace('/', '').replace(':USDT', '')
+        sym = symbol or DEFAULT_SYMBOL
+        clean_symbol = sym.replace('/', '').replace(':USDT', '')
         response = exchange.private_get_v5_position_list({
             'category': 'linear',
             'symbol': clean_symbol,

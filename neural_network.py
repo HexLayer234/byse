@@ -46,8 +46,8 @@ class LSTMTradingModel:
         self.scaler_path = f'{self.model_dir}/{clean_symbol}_scaler.pkl'
         self.trained_symbol = symbol
         
-    def prepare_data(self, df):
-        """Подготовить данные для LSTM"""
+    def prepare_data(self, df, validation_split=0.2):
+        """Подготовить данные для LSTM (без утечки данных)"""
         try:
             if df is None or len(df) < self.lookback + self.forecast_horizon:
                 logging.warning(f"⚠️ Недостаточно данных для LSTM: {len(df) if df is not None else 0}")
@@ -55,8 +55,10 @@ class LSTMTradingModel:
             
             features = df[['close', 'volume', 'high', 'low']].values
             
-            # Нормализуем И СОХРАНЯЕМ scaler
-            scaled_features = self.scaler.fit_transform(features)
+            # Fit scaler ТОЛЬКО на тренировочных данных (без утечки!)
+            train_size = int(len(features) * (1 - validation_split))
+            self.scaler.fit(features[:train_size])
+            scaled_features = self.scaler.transform(features)
             
             X, y = [], []
             
