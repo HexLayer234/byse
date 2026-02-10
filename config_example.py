@@ -80,6 +80,11 @@ ATR_PERIOD = 14
 BOLLINGER_PERIOD = 20
 BOLLINGER_STD_DEV = 2
 
+# ===== ПАРАМЕТРЫ АКТИВНОСТИ РЫНКА =====
+
+MIN_VOLATILITY = 0.001  # Минимальная волатильность (ATR) для торговли
+MIN_PRICE_CHANGE_PCT = 0.5  # Минимальное изменение цены в % за 10 свечей
+
 # ===== БИРЖА =====
 
 EXCHANGE = "binance"

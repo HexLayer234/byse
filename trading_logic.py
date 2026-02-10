@@ -131,41 +131,51 @@ def place_sell(price=None, amount=None):
         return None
 
 def compute_indicators(df):
-    """Рассчитывает технические индикаторы"""
+    """Рассчитывает технические индикаторы (параметры из конфига)"""
     try:
+        import config
+        
         if df is None or len(df) < 50:
             return None
         
-        # RSI
+        # RSI (период из конфига)
+        rsi_period = getattr(config, 'RSI_PERIOD', 14)
         delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        gain = (delta.where(delta > 0, 0)).rolling(window=rsi_period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=rsi_period).mean()
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
         
-        # MACD
-        exp1 = df['close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        # MACD (параметры из конфига)
+        macd_fast = getattr(config, 'MACD_FAST', 12)
+        macd_slow = getattr(config, 'MACD_SLOW', 26)
+        macd_signal_period = getattr(config, 'MACD_SIGNAL', 9)
+        exp1 = df['close'].ewm(span=macd_fast, adjust=False).mean()
+        exp2 = df['close'].ewm(span=macd_slow, adjust=False).mean()
         macd = exp1 - exp2
-        signal = macd.ewm(span=9, adjust=False).mean()
+        signal = macd.ewm(span=macd_signal_period, adjust=False).mean()
         histogram = macd - signal
         
-        # ATR
+        # ATR (период из конфига)
+        atr_period = getattr(config, 'ATR_PERIOD', 14)
         high_low = df['high'] - df['low']
         high_close = abs(df['high'] - df['close'].shift())
         low_close = abs(df['low'] - df['close'].shift())
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = ranges.max(axis=1)
-        atr = true_range.rolling(14).mean()
+        atr = true_range.rolling(atr_period).mean()
         
-        # Bollinger Bands
-        bb_sma = df['close'].rolling(window=20).mean()
-        bb_std = df['close'].rolling(window=20).std()
-        bb_upper = bb_sma + (bb_std * 2)
-        bb_lower = bb_sma - (bb_std * 2)
+        # Bollinger Bands (параметры из конфига)
+        bb_period = getattr(config, 'BOLLINGER_PERIOD', 20)
+        bb_std_dev = getattr(config, 'BOLLINGER_STD_DEV', 2)
+        bb_sma = df['close'].rolling(window=bb_period).mean()
+        bb_std = df['close'].rolling(window=bb_period).std()
+        bb_upper = bb_sma + (bb_std * bb_std_dev)
+        bb_lower = bb_sma - (bb_std * bb_std_dev)
         
-        # Volume MA
-        volume_ma = df['volume'].rolling(window=20).mean()
+        # Volume MA (период из конфига)
+        vol_period = getattr(config, 'VOLUME_MA_PERIOD', 20)
+        volume_ma = df['volume'].rolling(window=vol_period).mean()
         
         result = {
             'rsi': rsi.iloc[-1],
