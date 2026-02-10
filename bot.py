@@ -4,11 +4,12 @@ Telegram Bot с поддержкой FUTURES и SPOT режимов
 
 import logging
 import asyncio
+from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from config import TELEGRAM_TOKEN, LEVERAGE
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, LEVERAGE
 from telegram_utils import send_telegram_message
-from state_manager import state_manager  # ✨ ДОБАВЛЕНО
+from state_manager import state_manager
 from exchange import (
     set_leverage, get_balance_usdt, get_position, get_pnl,
     fetch_ohlcv_df
@@ -22,8 +23,22 @@ logger = logging.getLogger(__name__)
 # 🔴 ГЛАВНОЕ: ТОРГОВЫЙ СТАТУС
 TRADING_STATE = {'enabled': True}
 
+# 🔒 ДЕКОРАТОР АУТЕНТИФИКАЦИИ — только владелец может управлять ботом
+def authorized_only(func):
+    """Проверяет что команду отправил владелец бота"""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        chat_id = str(update.effective_chat.id)
+        if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
+            logger.warning(f"🚫 Неавторизованный доступ от chat_id={chat_id}")
+            await update.message.reply_text("❌ Доступ запрещён! Вы не являетесь владельцем бота.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
 # ===== РЕЖИМЫ И ПЕРЕКЛЮЧЕНИЕ =====
 
+@authorized_only
 async def cmd_trading_modes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает кнопки выбора режима торговли"""
     keyboard = [
@@ -80,6 +95,7 @@ async def trading_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         status = mode_manager.get_mode_status()
         await query.edit_message_text(text=status, parse_mode='HTML')
 
+@authorized_only
 async def cmd_switch_futures(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключение на фьючерсы"""
     try:
@@ -104,6 +120,7 @@ async def cmd_switch_futures(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"❌ Ошибка: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_switch_spot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключение на спот"""
     try:
@@ -130,16 +147,19 @@ async def cmd_switch_spot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== СТРАТЕГИИ =====
 
+@authorized_only
 async def cmd_strategies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать все стратегии"""
     info = strategy_manager.get_all_strategies_info()
     await update.message.reply_text(info, parse_mode='HTML')
 
+@authorized_only
 async def cmd_current_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Текущая стратегия"""
     info = strategy_manager.get_current_strategy_info()
     await update.message.reply_text(info, parse_mode='HTML')
 
+@authorized_only
 async def cmd_set_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить стратегию вручную"""
     if not context.args:
@@ -168,6 +188,7 @@ async def cmd_set_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ОСНОВНЫЕ КОМАНДЫ =====
 
+@authorized_only
 async def cmd_modes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает кнопки переключения режимов (АВТОНОМНЫЙ/РУЧНОЙ)"""
     keyboard = [
@@ -208,18 +229,21 @@ async def mode_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         status = mode_manager.get_mode_status()
         await query.edit_message_text(text=status, parse_mode='HTML')
 
+@authorized_only
 async def cmd_switch_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Быстрое переключение на автономный режим"""
     report = mode_manager.switch_to_autonomous()
     await update.message.reply_text(report, parse_mode='HTML')
     send_telegram_message(report)
 
+@authorized_only
 async def cmd_switch_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Быстрое переключение на ручной режим"""
     report = mode_manager.switch_to_manual()
     await update.message.reply_text(report, parse_mode='HTML')
     send_telegram_message(report)
 
+@authorized_only
 async def cmd_mode_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать статус режима"""
     status = mode_manager.get_mode_status()
@@ -227,6 +251,7 @@ async def cmd_mode_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== РУЧНОЙ РЕЖИМ КОМАНДЫ =====
 
+@authorized_only
 async def cmd_manual_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ручная покупка"""
     if not mode_manager.is_manual_mode():
@@ -264,6 +289,7 @@ async def cmd_manual_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ручная продажа"""
     if not mode_manager.is_manual_mode():
@@ -301,6 +327,7 @@ async def cmd_manual_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Закрыть позицию в ручном режиме"""
     if not mode_manager.is_manual_mode():
@@ -335,6 +362,7 @@ P&L: ${upnl:+.2f}"""
         logger.error(f"❌ Ошибка: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_leverage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить плечо в ручном режиме"""
     if not mode_manager.is_manual_mode():
@@ -376,6 +404,7 @@ async def cmd_manual_leverage(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить размер позиции в ручном режиме"""
     if not mode_manager.is_manual_mode():
@@ -413,6 +442,7 @@ async def cmd_manual_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Информация о текущей позиции"""
     try:
@@ -449,6 +479,7 @@ P&L: ${upnl:+.2f}
 
 # ===== ОСНОВНЫЕ КОМАНДЫ =====
 
+@authorized_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Главная команда"""
     keyboard = [
@@ -483,8 +514,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='HTML')
 
+@authorized_only
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """��татус торговли с подробной информацией"""
+    """Статус торговли с подробной информацией"""
     try:
         current_symbol = state_manager.get_symbol()
         
@@ -543,6 +575,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Баланс"""
     try:
@@ -562,11 +595,13 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Пауза"""
     TRADING_STATE['enabled'] = False
     await update.message.reply_text("⏸️ <b>Торговля остановлена</b>", parse_mode='HTML')
 
+@authorized_only
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возобновить"""
     TRADING_STATE['enabled'] = True

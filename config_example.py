@@ -10,15 +10,18 @@ logger = logging.getLogger(__name__)
 # ===== API КЛЮЧИ =====
 
 # 🔴 BINANCE/BYBIT API (КРИТИЧНО!)
-API_KEY = os.getenv('API_KEY', 'R496u9iAXl4IOIrgAo')
-API_SECRET = os.getenv('API_SECRET', 'vqf6pkm7KW8vQYeqtBLNsFuIno0R0qe7HJo5')
+# Установите через переменные окружения:
+#   export API_KEY='ваш_ключ'
+#   export API_SECRET='ваш_секрет'
+API_KEY = os.getenv('API_KEY', '')
+API_SECRET = os.getenv('API_SECRET', '')
 
 # 📰 NEWS API (для анализа новостей)
-NEWS_API_KEY = os.getenv('NEWS_API_KEY', '6468bc069ed94d77acf27de86ce6b8b4')
+NEWS_API_KEY = os.getenv('NEWS_API_KEY', '')
 
 # 📱 TELEGRAM
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '8588034825:AAFKNBmHm1hJbryyi-14QgLKqJMolPaPR9A')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '5088798855')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
 # ===== РЕЖИМ ТОРГОВЛИ =====
 
@@ -105,8 +108,13 @@ PRICE_CACHE_TIMEOUT = 5  # Секунды
 
 # ===== ПРОВЕРКА КОНФИГУРАЦИИ =====
 
-if API_KEY == "YOUR_API_KEY_HERE" or API_SECRET == "YOUR_API_SECRET_HERE":
-    logger.warning("⚠️ ВНИМАНИЕ! Используются заглушки ключей API!")
-    logger.warning("⚠️ Добавь реальные ключи в config.py или переменные окружения:")
-    logger.warning("   export API_KEY='твой_ключ'")
-    logger.warning("   export API_SECRET='твой_secret'")
+if not API_KEY or not API_SECRET:
+    logger.critical("❌ КРИТИЧНО: Не установлены API_KEY и API_SECRET!")
+    logger.critical("❌ Установите через переменные окружения:")
+    logger.critical("   export API_KEY='ваш_ключ'")
+    logger.critical("   export API_SECRET='ваш_секрет'")
+    raise ValueError("API_KEY и API_SECRET обязательны для работы бота!")
+
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    logger.warning("⚠️ ВНИМАНИЕ! Не установлены TELEGRAM_TOKEN и/или TELEGRAM_CHAT_ID!")
+    logger.warning("⚠️ Telegram уведомления будут отключены.")
