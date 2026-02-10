@@ -390,6 +390,7 @@ def init_xgboost():
     
     try:
         from config import SYMBOL
+        from exchange import fetch_ohlcv_df
         
         if xgb_predictor._load_model(SYMBOL):
             return True
