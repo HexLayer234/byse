@@ -168,15 +168,19 @@ class FullyAutonomousTrader:
                     logger.debug(f"⚠️ Ошибка получения позиций: {e}")
                     active_positions = {}
                 
-                # Обновляем словарь positions
+                # Обновляем словарь positions + актуализируем size из биржи
                 for sym, pos in active_positions.items():
+                    real_size = float(pos.get('contracts', 0))
                     if sym not in self.positions:
                         self.positions[sym] = {
                             'entry_price': float(pos.get('entryPrice', 0)),
                             'entry_time': datetime.now(),
-                            'size': float(pos.get('contracts', 0)),
+                            'size': real_size,
                             'side': pos.get('side', 'long')
                         }
+                    else:
+                        # Обновляем size из биржи (актуальный)
+                        self.positions[sym]['size'] = real_size
                 
                 # Убираем закрытые
                 closed = [s for s in self.positions if s not in active_positions]
@@ -318,17 +322,35 @@ class FullyAutonomousTrader:
                                 
                                 pos_side = 'short' if entry_direction == 'SHORT' else 'long'
                                 
+                                order = None
                                 if pos_side == 'short':
                                     from trading_logic import place_short
                                     config.BASE_AMOUNT = int(position_size_usdt)
                                     order = place_short(entry_conditions['entry_price'])
                                 else:
-                                    await self._execute_entry(entry_conditions['entry_price'], position_size_usdt)
+                                    config.BASE_AMOUNT = int(position_size_usdt)
+                                    from trading_logic import place_long
+                                    order = place_long(entry_conditions['entry_price'])
+                                
+                                # Получаем реальный размер из ордера
+                                real_size = 0
+                                if order:
+                                    real_size = float(order.get('filled', 0) or order.get('amount', 0) or 0)
+                                
+                                # Если ордер лимитный — может ещё не исполниться, берём из биржи
+                                if real_size == 0:
+                                    try:
+                                        import time
+                                        time.sleep(2)  # Ждём исполнения лимитного ордера
+                                        pos_size, _, _, _ = get_position(sym)
+                                        real_size = pos_size
+                                    except:
+                                        real_size = position_size_usdt / entry_conditions['entry_price']
                                 
                                 self.positions[sym] = {
                                     'entry_price': entry_conditions['entry_price'],
                                     'entry_time': datetime.now(),
-                                    'size': 0,
+                                    'size': real_size,
                                     'side': pos_side
                                 }
                                 trailing_stop_manager.register_position(sym, entry_conditions['entry_price'])
