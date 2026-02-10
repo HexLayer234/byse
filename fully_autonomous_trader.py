@@ -14,12 +14,13 @@ from telegram_utils import send_telegram_message
 from trade_database import trade_db
 from mode_manager import mode_manager
 from strategy_manager import strategy_manager
+from trailing_stop import trailing_stop_manager
 import config
 
 logger = logging.getLogger(__name__)
 
 class FullyAutonomousTrader:
-    """Полностью автономный трейдер с режимами и стратегиями"""
+    """Полностью автономный трейдер с мультимонетной торговлей"""
     
     def __init__(self):
         self.current_position = None
@@ -29,6 +30,11 @@ class FullyAutonomousTrader:
         self.last_coin_change_time = 0
         self.price_history = []
         self.consecutive_waits = 0
+        
+        # Мультимонетная торговля — позиции по каждой монете
+        self.positions = {}  # {symbol: {entry_price, entry_time, size, side}}
+        self.max_coins = getattr(config, 'MAX_COINS', 2)
+        self.last_analysis = {}  # {symbol: {confidence, direction, reasons, timestamp}}
     
     async def autonomous_trading_cycle(self):
         """Основной цикл с автоматической сменой стратегий"""
@@ -65,23 +71,23 @@ class FullyAutonomousTrader:
                     current_price = df['close'].iloc[-1]
                     self.price_history.append(current_price)
                     
-                    if len(self.price_history) > 30:
+                    if len(self.price_history) > 15:
                         self.price_history.pop(0)
                     
                     current_time = asyncio.get_event_loop().time()
                     time_since_change = (current_time - self.last_coin_change_time) / 60
                     
-                    # Смена монеты только когда НЕТ открытой позиции
+                    # Смена монеты когда НЕТ открытой позиции — проверяем чаще
                     size, _, _, _ = get_position()
-                    if time_since_change >= 30 and len(self.price_history) >= 30 and size == 0:
+                    if time_since_change >= 15 and len(self.price_history) >= 10 and size == 0:
                         price_range = max(self.price_history) - min(self.price_history)
                         volatility_pct = (price_range / current_price) * 100
                         
-                        logger.info(f"📊 Волатильность за 30 мин: {volatility_pct:.2f}%")
+                        logger.info(f"📊 Волатильность за {int(time_since_change)} мин: {volatility_pct:.2f}%")
                         
-                        if volatility_pct < 2.0:
+                        if volatility_pct < 1.5:
                             logger.warning(
-                                f"⚠️ Нет движений 30 минут (волатильность {volatility_pct:.2f}%), "
+                                f"⚠️ Нет движений {int(time_since_change)} мин (волатильность {volatility_pct:.2f}%), "
                                 f"меняю монету"
                             )
                             
@@ -149,129 +155,261 @@ class FullyAutonomousTrader:
                     auto_leverage_manager.auto_adjust_leverage(config.SYMBOL)
                     self.last_leverage_adjustment = current_time
                 
-                # Получаем позицию
-                size, side, avg_price, upnl = get_position()
-                self.current_position = size > 0
+                # ===== МУЛЬТИМОНЕТНАЯ ТОРГОВЛЯ =====
+                # Получаем все открытые позиции с биржи
+                try:
+                    from exchange import exchange as _exchange
+                    all_positions = _exchange.fetch_positions()
+                    active_positions = {
+                        p['symbol']: p for p in all_positions 
+                        if float(p.get('contracts', 0)) > 0
+                    }
+                except Exception as e:
+                    logger.debug(f"⚠️ Ошибка получения позиций: {e}")
+                    active_positions = {}
                 
-                if self.current_position and size > 0:
-                    # === ПОЗИЦИЯ ОТКРЫТА — ПРОВЕРЯЕМ ВЫХОД ===
-                    self.consecutive_waits = 0
-                    
-                    df = fetch_ohlcv_df()
-                    if df is not None and len(df) > 0:
-                        current_price = df['close'].iloc[-1]
+                # Обновляем словарь positions + актуализируем size из биржи
+                for sym, pos in active_positions.items():
+                    real_size = float(pos.get('contracts', 0))
+                    if sym not in self.positions:
+                        self.positions[sym] = {
+                            'entry_price': float(pos.get('entryPrice', 0)),
+                            'entry_time': datetime.now(),
+                            'size': real_size,
+                            'side': pos.get('side', 'long')
+                        }
+                    else:
+                        # Обновляем size из биржи (актуальный)
+                        self.positions[sym]['size'] = real_size
+                
+                # Убираем закрытые
+                closed = [s for s in self.positions if s not in active_positions]
+                for s in closed:
+                    del self.positions[s]
+                
+                open_count = len(active_positions)
+                self.current_position = open_count > 0
+                
+                # === 1. МОНИТОРИНГ ОТКРЫТЫХ ПОЗИЦИЙ ===
+                for sym, pos_data in list(self.positions.items()):
+                    try:
+                        # Получаем данные для этой монеты
+                        candles = _exchange.fetch_ohlcv(sym, config.TIMEFRAME, limit=100)
+                        if not candles:
+                            continue
+                        import pandas as pd
+                        df_sym = pd.DataFrame(candles, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
+                        current_price = df_sym['close'].iloc[-1]
                         
-                        # Определяем цену входа
-                        # Приоритет: self.entry_price > avg_price из биржи
-                        entry = self.entry_price if self.entry_price and self.entry_price > 0 else avg_price
+                        entry = pos_data['entry_price']
+                        size = pos_data['size']
                         
                         if entry and entry > 0:
                             profit_pct = ((current_price - entry) / entry) * 100
                             
+                            # Trailing stop
+                            trailing_stop_manager.update_trailing_stop(sym, current_price)
+                            ts_stats = trailing_stop_manager.get_stats(sym)
+                            ts_info = f" | Trail: ${ts_stats['trailing_stop']:.8f}" if ts_stats else ""
+                            
                             logger.info(
-                                f"📍 Позиция: {side} {size:.4f} | "
+                                f"📍 [{sym}] {pos_data['side']} {size:.4f} | "
                                 f"Вход: ${entry:.8f} | "
                                 f"Текущая: ${current_price:.8f} | "
-                                f"P&L: {profit_pct:+.2f}% (${upnl:+.4f})"
+                                f"P&L: {profit_pct:+.2f}%{ts_info}"
                             )
                             
-                            exit_conditions = smart_signal_generator.analyze_exit_conditions(
-                                config.SYMBOL, entry, current_price
-                            )
-                            
-                            if exit_conditions['should_exit']:
-                                if exit_conditions['exit_percent'] == 100:
-                                    await self._execute_exit(current_price, size, exit_conditions['exit_type'])
-                                    self.current_position = None
-                                    self.entry_price = None
-                                    self.entry_time = None
-                                else:
-                                    exit_amount = size * (exit_conditions['exit_percent'] / 100)
-                                    await self._execute_partial_exit(current_price, exit_amount, exit_conditions['exit_type'])
-                        else:
-                            logger.warning(
-                                f"⚠️ Позиция открыта ({side} {size:.4f}) но нет цены входа! "
-                                f"avg_price={avg_price}, self.entry_price={self.entry_price}"
-                            )
-                            # Пытаемся восстановить цену входа из avg_price
-                            if avg_price and avg_price > 0:
-                                self.entry_price = avg_price
-                                logger.info(f"✅ Цена входа восстановлена из биржи: ${avg_price:.8f}")
+                            # Trailing stop сработал
+                            if ts_stats and ts_stats['status'] == 'СРАБОТАЛ':
+                                logger.warning(f"📉 Trailing stop для {sym}!")
+                                old_symbol = config.SYMBOL
+                                config.SYMBOL = sym
+                                await self._execute_exit(current_price, size, 'TRAILING_STOP')
+                                trailing_stop_manager.remove_position(sym)
+                                config.SYMBOL = old_symbol
                             else:
-                                # Берём текущую цену как входную (не идеально, но лучше чем ничего)
-                                self.entry_price = current_price
-                                logger.warning(f"⚠️ Используем текущую цену как входную: ${current_price:.8f}")
-                    else:
-                        logger.warning("⚠️ Не удалось получить данные OHLCV для проверки выхода")
+                                # Проверка условий выхода
+                                exit_conditions = smart_signal_generator.analyze_exit_conditions(
+                                    sym, entry, current_price
+                                )
+                                if exit_conditions.get('should_exit'):
+                                    old_symbol = config.SYMBOL
+                                    config.SYMBOL = sym
+                                    if exit_conditions['exit_percent'] == 100:
+                                        await self._execute_exit(current_price, size, exit_conditions['exit_type'])
+                                        trailing_stop_manager.remove_position(sym)
+                                    else:
+                                        exit_amount = size * (exit_conditions['exit_percent'] / 100)
+                                        await self._execute_partial_exit(current_price, exit_amount, exit_conditions['exit_type'])
+                                    config.SYMBOL = old_symbol
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка мониторинга {sym}: {e}")
                 
-                else:
-                    # === ПОЗИЦИЯ ЗАКРЫТА — ИЩЕМ ВХОД ===
-                    logger.info("🔍 Позиция закрыта, ищу точку входа...")
-                    entry_conditions = smart_signal_generator.analyze_entry_conditions(config.SYMBOL)
+                # === 2. ПОИСК ВХОДА ДЛЯ НОВЫХ МОНЕТ ===
+                if open_count < self.max_coins:
+                    # Выбираем лучшие монеты для входа
+                    from coin_selector import coin_selector
+                    from state_manager import state_manager
                     
-                    # Порог из стратегии
-                    current_strategy = strategy_manager.STRATEGIES.get(
-                        strategy_manager.current_strategy, {}
-                    )
-                    entry_threshold = current_strategy.get('entry_threshold', 45)
+                    symbols_to_check = []
                     
-                    # Адаптивное снижение порога
-                    if self.consecutive_waits > 10:
-                        reduction = min((self.consecutive_waits - 10) // 10 * 3, 15)
-                        entry_threshold = max(30, entry_threshold - reduction)
+                    # Текущий символ из конфига — всегда первый кандидат
+                    symbols_to_check.append(config.SYMBOL)
+                    
+                    # Если нужна ещё одна монета — берём из рейтинга
+                    if open_count < self.max_coins:
+                        try:
+                            best_coins = coin_selector.select_best_coins()
+                            for coin in best_coins:
+                                if coin['symbol'] not in active_positions and coin['symbol'] not in symbols_to_check:
+                                    symbols_to_check.append(coin['symbol'])
+                                    if len(symbols_to_check) >= self.max_coins:
+                                        break
+                        except Exception as e:
+                            logger.debug(f"⚠️ Ошибка выбора монет: {e}")
+                    
+                    entered_this_cycle = False
+                    for sym in symbols_to_check:
+                        if sym in active_positions:
+                            continue
+                        if open_count >= self.max_coins:
+                            break
                         
-                        if self.consecutive_waits % 10 == 0:
-                            logger.info(
-                                f"📉 Адаптивный порог: снижен до {entry_threshold} "
-                                f"(ожиданий: {self.consecutive_waits})"
+                        logger.info(f"🔍 [{sym}] Ищу точку входа...")
+                        
+                        # Временно переключаем символ для анализа
+                        old_symbol = config.SYMBOL
+                        config.SYMBOL = sym
+                        
+                        try:
+                            entry_conditions = smart_signal_generator.analyze_entry_conditions(sym)
+                            
+                            current_strategy = strategy_manager.STRATEGIES.get(
+                                strategy_manager.current_strategy, {}
                             )
-                    
-                    if entry_conditions['is_good_to_buy'] and entry_conditions['confidence'] >= entry_threshold:
-                        position_size_usdt = auto_balance_manager.calculate_safe_position_size(config.SYMBOL)
-                        await self._execute_entry(entry_conditions['entry_price'], position_size_usdt)
-                        self.entry_price = entry_conditions['entry_price']
-                        self.entry_time = datetime.now()
-                        self.current_position = True
-                        self.consecutive_waits = 0
-                    else:
-                        self.consecutive_waits += 1
-                        logger.info(
-                            f"⏳ Ожидание: уверенность {entry_conditions['confidence']}% "
-                            f"(порог {entry_threshold}%) "
-                            f"[ожиданий: {self.consecutive_waits}]"
-                        )
-                        
-                        # Каждые 2 часа (120 ожиданий) меняем монету если не можем войти
-                        if self.consecutive_waits >= 120 and self.consecutive_waits % 120 == 0:
-                            try:
-                                from coin_selector import coin_selector
-                                from state_manager import state_manager
+                            entry_threshold = current_strategy.get('entry_threshold', 45)
+                            
+                            # Адаптивное снижение — быстрее и агрессивнее
+                            if self.consecutive_waits > 5:
+                                reduction = min((self.consecutive_waits - 5) // 3 * 3, 20)
+                                entry_threshold = max(15, entry_threshold - reduction)
+                            
+                            # Сохраняем результат анализа для /status
+                            self.last_analysis[sym] = {
+                                'confidence': entry_conditions.get('confidence', 0),
+                                'direction': entry_conditions.get('direction', 'NEUTRAL'),
+                                'is_good_to_buy': entry_conditions.get('is_good_to_buy', False),
+                                'is_good_to_short': entry_conditions.get('is_good_to_short', False),
+                                'reasons': entry_conditions.get('reasons', []),
+                                'entry_threshold': entry_threshold,
+                                'timestamp': datetime.now().isoformat()
+                            }
+                            
+                            # Также проверяем SHORT сигнал
+                            is_entry = (
+                                (entry_conditions.get('is_good_to_buy') and entry_conditions['confidence'] >= entry_threshold) or
+                                (entry_conditions.get('is_good_to_short') and entry_conditions['confidence'] >= entry_threshold)
+                            )
+                            entry_direction = entry_conditions.get('direction', 'LONG')
+                            
+                            if is_entry:
+                                # Делим баланс только между СВОБОДНЫМИ слотами
+                                free_slots = max(self.max_coins - open_count, 1)
+                                position_size_usdt = auto_balance_manager.calculate_safe_position_size(sym)
+                                position_size_usdt = position_size_usdt / free_slots
                                 
-                                best_coins = coin_selector.select_best_coins()
-                                if best_coins:
-                                    for coin in best_coins:
-                                        if coin['symbol'] != config.SYMBOL:
-                                            old_coin = config.SYMBOL
-                                            new_coin = coin['symbol']
-                                            config.SYMBOL = new_coin
-                                            state_manager.set_symbol(new_coin)
-                                            
-                                            try:
-                                                from neural_network import switch_lstm_symbol
-                                                switch_lstm_symbol(new_coin)
-                                            except:
-                                                pass
-                                            
-                                            send_telegram_message(
-                                                f"🔄 Смена монеты (долгое ожидание):\n"
-                                                f"{old_coin} → <b>{new_coin}</b>\n"
-                                                f"Score: {coin['potential_score']:.1f}/100"
-                                            )
-                                            self.consecutive_waits = 0
-                                            self.price_history = []
-                                            break
-                            except Exception as e:
-                                logger.warning(f"⚠️ Ошибка смены монеты: {e}")
+                                state_manager.set_symbol(sym)
+                                
+                                pos_side = 'short' if entry_direction == 'SHORT' else 'long'
+                                
+                                order = None
+                                if pos_side == 'short':
+                                    from trading_logic import place_short
+                                    config.BASE_AMOUNT = int(position_size_usdt)
+                                    order = place_short(entry_conditions['entry_price'])
+                                else:
+                                    config.BASE_AMOUNT = int(position_size_usdt)
+                                    from trading_logic import place_long
+                                    order = place_long(entry_conditions['entry_price'])
+                                
+                                # Получаем реальный размер из ордера
+                                real_size = 0
+                                if order:
+                                    real_size = float(order.get('filled', 0) or order.get('amount', 0) or 0)
+                                
+                                # Если ордер лимитный — может ещё не исполниться, берём из биржи
+                                if real_size == 0:
+                                    try:
+                                        import time
+                                        time.sleep(2)  # Ждём исполнения лимитного ордера
+                                        pos_size, _, _, _ = get_position(sym)
+                                        real_size = pos_size
+                                    except:
+                                        real_size = position_size_usdt / entry_conditions['entry_price']
+                                
+                                self.positions[sym] = {
+                                    'entry_price': entry_conditions['entry_price'],
+                                    'entry_time': datetime.now(),
+                                    'size': real_size,
+                                    'side': pos_side
+                                }
+                                trailing_stop_manager.register_position(sym, entry_conditions['entry_price'])
+                                
+                                self.entry_price = entry_conditions['entry_price']
+                                self.entry_time = datetime.now()
+                                self.consecutive_waits = 0
+                                open_count += 1
+                                entered_this_cycle = True
+                                
+                                side_icon = '🔴 SHORT' if pos_side == 'short' else '🟢 LONG'
+                                send_telegram_message(
+                                    f"{side_icon} <b>ВХОД [{open_count}/{self.max_coins}]</b>\n"
+                                    f"Монета: {sym}\n"
+                                    f"Цена: ${entry_conditions['entry_price']:.8f}\n"
+                                    f"Размер: ${position_size_usdt:.2f}\n"
+                                    f"Уверенность: {entry_conditions['confidence']}%"
+                                )
+                            else:
+                                logger.info(
+                                    f"⏳ [{sym}] уверенность {entry_conditions['confidence']}% "
+                                    f"(порог {entry_threshold}%)"
+                                )
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка анализа {sym}: {e}")
+                        finally:
+                            config.SYMBOL = old_symbol
+                    
+                    if not entered_this_cycle:
+                        self.consecutive_waits += 1
+                    
+                    # Смена монет при долгом ожидании (каждые 30 минут)
+                    if self.consecutive_waits >= 30 and self.consecutive_waits % 30 == 0:
+                        try:
+                            best_coins = coin_selector.select_best_coins()
+                            if best_coins:
+                                for coin in best_coins:
+                                    if coin['symbol'] != config.SYMBOL:
+                                        old_coin = config.SYMBOL
+                                        new_coin = coin['symbol']
+                                        config.SYMBOL = new_coin
+                                        state_manager.set_symbol(new_coin)
+                                        
+                                        try:
+                                            from neural_network import switch_lstm_symbol
+                                            switch_lstm_symbol(new_coin)
+                                        except:
+                                            pass
+                                        
+                                        send_telegram_message(
+                                            f"🔄 Смена монеты:\n"
+                                            f"{old_coin} → <b>{new_coin}</b>\n"
+                                            f"Score: {coin['potential_score']:.1f}/100"
+                                        )
+                                        self.consecutive_waits = 0
+                                        self.price_history = []
+                                        break
+                        except Exception as e:
+                            logger.warning(f"⚠️ Ошибка смены монеты: {e}")
                 
                 await asyncio.sleep(60)
             
@@ -334,11 +472,12 @@ class FullyAutonomousTrader:
                 profit = (price - self.entry_price) / self.entry_price * 100
             
             if order:
+                entry_display = self.entry_price if self.entry_price else 0
                 msg = f"""🔴 <b>АВТОМАТИЧЕСКИЙ ВЫХОД</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 Пара: {config.SYMBOL}
 Тип: {exit_type}
-Цена входа: ${self.entry_price:.8f if self.entry_price else 0:.8f}
+Цена входа: ${entry_display:.8f}
 Цена выхода: ${price:.8f}
 Прибыль: {profit:+.2f}%
 Время: {datetime.now().strftime('%H:%M:%S')}"""
@@ -355,20 +494,21 @@ class FullyAutonomousTrader:
             
             # Для частичного выхода передаём конкретное количество
             from state_manager import state_manager
+            from exchange import exchange as _exchange
+            import math
+            
             symbol = state_manager.get_symbol()
             
-            market_info = exchange.market(symbol)
+            market_info = _exchange.market(symbol)
             precision = market_info['precision']['amount']
             
             if isinstance(precision, float) and precision < 1:
-                import math
                 decimal_places = max(0, -int(math.floor(math.log10(precision))))
                 amount = round(amount, decimal_places)
             else:
                 amount = round(amount, int(precision))
             
-            from exchange import exchange
-            order = exchange.create_market_sell_order(symbol=symbol, amount=amount)
+            order = _exchange.create_market_sell_order(symbol=symbol, amount=amount)
             
             if order:
                 msg = f"""⚪ <b>ЧАСТИЧНЫЙ ВЫХОД</b>
@@ -406,6 +546,7 @@ class FullyAutonomousTrader:
             entry = self.entry_price if self.entry_price else avg
             profit_pct = ((avg - entry) / entry * 100) if entry and entry > 0 and size > 0 else 0
             
+            entry_display = entry if entry else 0
             return f"""
 ╔════════════════════════════════════════════════════════════╗
 ║           📊 СТАТУС ТРЕЙДЕРА                               ║
@@ -414,7 +555,7 @@ class FullyAutonomousTrader:
 ║ <b>Стратегия:</b> {strategy_text}
 ║ <b>Пара:</b> {config.SYMBOL}
 ║ <b>Позиция:</b> {side or 'НЕТ'} {size:.4f}
-║ <b>Вход:</b> ${entry:.8f if entry else 0:.8f}
+║ <b>Вход:</b> ${entry_display:.8f}
 ║ <b>P&L:</b> {upnl:+.4f} USDT ({profit_pct:+.2f}%)
 ║ <b>Баланс:</b> ${total:.2f}
 ║ <b>Свободно:</b> ${free:.2f}

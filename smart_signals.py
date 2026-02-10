@@ -193,16 +193,27 @@ class SmartSignalGenerator:
                 logger.debug(f"⚠️ Ошибка анализа объёма: {e}")
             
             # === ИТОГОВАЯ ОЦЕНКА ===
-            conditions['confidence'] = max(0, min(confidence_score, 100))
+            conditions['confidence'] = max(0, min(abs(confidence_score), 100))
             
-            # Блокировка при сильном медвежьем тренде
+            # Определяем направление: LONG или SHORT
             if bearish_block:
+                # Сильный медвежий тренд — сигнал на SHORT
                 conditions['is_good_to_buy'] = False
-                conditions['reasons'].append("🚫 Блокировка: сильный медвежий тренд")
+                conditions['is_good_to_short'] = abs(confidence_score) >= 20
+                conditions['direction'] = 'SHORT'
+                conditions['reasons'].append("🔴 Сильный медвежий тренд → SHORT сигнал")
+            elif confidence_score >= 20:
+                conditions['is_good_to_buy'] = True
+                conditions['is_good_to_short'] = False
+                conditions['direction'] = 'LONG'
+            elif confidence_score <= -20:
+                conditions['is_good_to_buy'] = False
+                conditions['is_good_to_short'] = True
+                conditions['direction'] = 'SHORT'
             else:
-                # Базовый порог — 35 очков
-                # Финальный порог определяется стратегией в fully_autonomous_trader
-                conditions['is_good_to_buy'] = confidence_score >= 35
+                conditions['is_good_to_buy'] = False
+                conditions['is_good_to_short'] = False
+                conditions['direction'] = 'NEUTRAL'
             
             logger.info(
                 f"📊 Результат анализа входа для {symbol}:\n"

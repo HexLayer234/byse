@@ -125,4 +125,4 @@ class TrailingStopManager:
             return stats
         return None
 
-trailing_stop_manager = TrailingStopManager(trailing_percent=1.0)
+trailing_stop_manager = TrailingStopManager(trailing_percent=2.0)

@@ -1,7 +1,23 @@
-from prophet import Prophet
+import contextlib
+import io
 import pandas as pd
 import logging
 from exchange import fetch_ohlcv_df
+
+# Ленивый импорт Prophet — может быть не установлен
+_prophet_available = None
+
+def _check_prophet():
+    """Проверяет доступность Prophet"""
+    global _prophet_available
+    if _prophet_available is None:
+        try:
+            from prophet import Prophet
+            _prophet_available = True
+        except ImportError:
+            logging.warning("⚠️ Prophet не установлен, прогнозирование отключено")
+            _prophet_available = False
+    return _prophet_available
 
 def fetch_historical_data():
     """Получить исторические данные для Prophet"""
@@ -22,6 +38,11 @@ def fetch_historical_data():
 def predict_price(hours_ahead=4):
     """Прогноз цены на N часов вперёд используя Prophet"""
     try:
+        if not _check_prophet():
+            return None, None, None
+        
+        from prophet import Prophet
+        
         df = fetch_historical_data()
         if df is None or len(df) < 50:
             logging.warning(f"⚠️ Недостаточно данных для прогноза (need 50, got {len(df) if df is not None else 0})")
@@ -35,11 +56,9 @@ def predict_price(hours_ahead=4):
             interval_width=0.95
         )
         
-        with open('/dev/null', 'w') as f:
-            import sys
-            sys.stderr = f
+        # Безопасное подавление вывода Prophet (без потери stderr)
+        with contextlib.redirect_stderr(io.StringIO()):
             model.fit(df)
-            sys.stderr = sys.__stderr__
 
         # Количество периодов (5м свечи)
         periods = hours_ahead * 12

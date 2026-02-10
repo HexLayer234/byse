@@ -24,7 +24,7 @@ class StrategyManager:
             'position_size': 0.2,
             'stop_loss': 2.0,
             'take_profit': 5.0,
-            'entry_threshold': 55,  # Было 80 → стало 55
+            'entry_threshold': 40,
             'description': 'Минимальный риск, долгосрочные позиции'
         },
         'CONSERVATIVE': {
@@ -34,7 +34,7 @@ class StrategyManager:
             'position_size': 0.3,
             'stop_loss': 2.5,
             'take_profit': 8.0,
-            'entry_threshold': 50,  # Было 70 → стало 50
+            'entry_threshold': 35,
             'description': 'Низкий риск, стабильная торговля'
         },
         'BALANCED': {
@@ -44,7 +44,7 @@ class StrategyManager:
             'position_size': 0.5,
             'stop_loss': 2.0,
             'take_profit': 5.0,
-            'entry_threshold': 40,
+            'entry_threshold': 30,
             'description': 'Средний риск/прибыль'
         },
         'MODERATE_AGGRESSIVE': {
@@ -54,7 +54,7 @@ class StrategyManager:
             'position_size': 0.7,
             'stop_loss': 4.0,
             'take_profit': 18.0,
-            'entry_threshold': 40,  # Было 55 → стало 40
+            'entry_threshold': 28,
             'description': 'Выше риск, больше прибыль'
         },
         'AGGRESSIVE': {
@@ -64,7 +64,7 @@ class StrategyManager:
             'position_size': 0.7,
             'stop_loss': 2.0,
             'take_profit': 5.0,
-            'entry_threshold': 35,
+            'entry_threshold': 25,
             'description': 'Высокий риск, быстрая прибыль'
         },
         'ULTRA_AGGRESSIVE': {
@@ -74,7 +74,7 @@ class StrategyManager:
             'position_size': 0.9,
             'stop_loss': 7.0,
             'take_profit': 35.0,
-            'entry_threshold': 30,  # Было 45 → стало 30
+            'entry_threshold': 20,
             'description': 'Максимальный риск и прибыль'
         },
         'SCALPING': {
@@ -84,7 +84,7 @@ class StrategyManager:
             'position_size': 0.6,
             'stop_loss': 1.0,
             'take_profit': 2.5,
-            'entry_threshold': 30,
+            'entry_threshold': 22,
             'description': 'Быстрые сделки, маленький профит'
         },
         'SWING': {
@@ -94,7 +94,7 @@ class StrategyManager:
             'position_size': 0.4,
             'stop_loss': 5.0,
             'take_profit': 20.0,
-            'entry_threshold': 45,  # Было 65 → ст��ло 45
+            'entry_threshold': 32,  # Было 65 → ст��ло 45
             'description': 'Среднесрочные позиции'
         }
     }

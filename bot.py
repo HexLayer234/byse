@@ -4,11 +4,12 @@ Telegram Bot с поддержкой FUTURES и SPOT режимов
 
 import logging
 import asyncio
+from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from config import TELEGRAM_TOKEN, LEVERAGE
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, LEVERAGE
 from telegram_utils import send_telegram_message
-from state_manager import state_manager  # ✨ ДОБАВЛЕНО
+from state_manager import state_manager
 from exchange import (
     set_leverage, get_balance_usdt, get_position, get_pnl,
     fetch_ohlcv_df
@@ -22,8 +23,22 @@ logger = logging.getLogger(__name__)
 # 🔴 ГЛАВНОЕ: ТОРГОВЫЙ СТАТУС
 TRADING_STATE = {'enabled': True}
 
+# 🔒 ДЕКОРАТОР АУТЕНТИФИКАЦИИ — только владелец может управлять ботом
+def authorized_only(func):
+    """Проверяет что команду отправил владелец бота"""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        chat_id = str(update.effective_chat.id)
+        if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
+            logger.warning(f"🚫 Неавторизованный доступ от chat_id={chat_id}")
+            await update.message.reply_text("❌ Доступ запрещён! Вы не являетесь владельцем бота.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
 # ===== РЕЖИМЫ И ПЕРЕКЛЮЧЕНИЕ =====
 
+@authorized_only
 async def cmd_trading_modes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает кнопки выбора режима торговли"""
     keyboard = [
@@ -80,6 +95,7 @@ async def trading_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         status = mode_manager.get_mode_status()
         await query.edit_message_text(text=status, parse_mode='HTML')
 
+@authorized_only
 async def cmd_switch_futures(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключение на фьючерсы"""
     try:
@@ -104,6 +120,7 @@ async def cmd_switch_futures(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"❌ Ошибка: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_switch_spot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключение на спот"""
     try:
@@ -130,16 +147,19 @@ async def cmd_switch_spot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== СТРАТЕГИИ =====
 
+@authorized_only
 async def cmd_strategies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать все стратегии"""
     info = strategy_manager.get_all_strategies_info()
     await update.message.reply_text(info, parse_mode='HTML')
 
+@authorized_only
 async def cmd_current_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Текущая стратегия"""
     info = strategy_manager.get_current_strategy_info()
     await update.message.reply_text(info, parse_mode='HTML')
 
+@authorized_only
 async def cmd_set_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить стратегию вручную"""
     if not context.args:
@@ -168,6 +188,7 @@ async def cmd_set_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ОСНОВНЫЕ КОМАНДЫ =====
 
+@authorized_only
 async def cmd_modes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает кнопки переключения режимов (АВТОНОМНЫЙ/РУЧНОЙ)"""
     keyboard = [
@@ -208,18 +229,21 @@ async def mode_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         status = mode_manager.get_mode_status()
         await query.edit_message_text(text=status, parse_mode='HTML')
 
+@authorized_only
 async def cmd_switch_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Быстрое переключение на автономный режим"""
     report = mode_manager.switch_to_autonomous()
     await update.message.reply_text(report, parse_mode='HTML')
     send_telegram_message(report)
 
+@authorized_only
 async def cmd_switch_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Быстрое переключение на ручной режим"""
     report = mode_manager.switch_to_manual()
     await update.message.reply_text(report, parse_mode='HTML')
     send_telegram_message(report)
 
+@authorized_only
 async def cmd_mode_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать статус режима"""
     status = mode_manager.get_mode_status()
@@ -227,6 +251,7 @@ async def cmd_mode_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== РУЧНОЙ РЕЖИМ КОМАНДЫ =====
 
+@authorized_only
 async def cmd_manual_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ручная покупка"""
     if not mode_manager.is_manual_mode():
@@ -264,6 +289,7 @@ async def cmd_manual_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ручная продажа"""
     if not mode_manager.is_manual_mode():
@@ -301,6 +327,7 @@ async def cmd_manual_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Закрыть позицию в ручном режиме"""
     if not mode_manager.is_manual_mode():
@@ -335,6 +362,7 @@ P&L: ${upnl:+.2f}"""
         logger.error(f"❌ Ошибка: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_leverage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить плечо в ручном режиме"""
     if not mode_manager.is_manual_mode():
@@ -376,6 +404,7 @@ async def cmd_manual_leverage(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить размер позиции в ручном режиме"""
     if not mode_manager.is_manual_mode():
@@ -413,6 +442,7 @@ async def cmd_manual_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_manual_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Информация о текущей позиции"""
     try:
@@ -449,6 +479,7 @@ P&L: ${upnl:+.2f}
 
 # ===== ОСНОВНЫЕ КОМАНДЫ =====
 
+@authorized_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Главная команда"""
     keyboard = [
@@ -483,8 +514,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='HTML')
 
+@authorized_only
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """��татус торговли с подробной информацией"""
+    """Статус торговли с ИИ-аналитикой и прогнозом времени"""
     try:
         current_symbol = state_manager.get_symbol()
         
@@ -496,32 +528,133 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Стратегия
         from strategy_manager import strategy_manager
-        strategy_name = strategy_manager.STRATEGIES[strategy_manager.current_strategy]['name']
-        
-        # Позиция с деталями
-        if size > 0 and avg > 0:
-            from exchange import fetch_ohlcv_df
-            df = fetch_ohlcv_df()
-            current_price = df['close'].iloc[-1] if df is not None and len(df) > 0 else avg
-            profit_pct = ((current_price - avg) / avg) * 100
-            position_value = size * current_price
-            
-            position_text = f"""<b>📍 Позиция:</b> {side} {size:.4f}
-  Цена входа: ${avg:.8f}
-  Текущая цена: ${current_price:.8f}
-  Размер: ${position_value:.2f}
-  <b>P&L: {profit_pct:+.2f}% (${upnl:+.4f})</b>"""
-            
-            if profit_pct > 0:
-                position_text += "\n  📈 В ПРИБЫЛИ"
-            else:
-                position_text += "\n  📉 В УБЫТКЕ"
-        else:
-            position_text = "<b>📍 Позиция:</b> НЕТ (ищу вход...)"
+        strategy = strategy_manager.STRATEGIES[strategy_manager.current_strategy]
+        strategy_name = strategy['name']
+        tp = strategy['take_profit']
+        sl = strategy['stop_loss']
+        entry_threshold = strategy['entry_threshold']
+        strategy_leverage = strategy['leverage']
         
         # Трейдер
         from fully_autonomous_trader import fully_autonomous_trader
         waits = fully_autonomous_trader.consecutive_waits
+        
+        # === БЛОК ПОЗИЦИЙ — МУЛЬТИМОНЕТНЫЙ ===
+        from smart_signals import smart_signal_generator
+        from exchange import exchange as _exchange
+        from fully_autonomous_trader import fully_autonomous_trader
+        import pandas as pd
+        
+        open_positions = fully_autonomous_trader.positions
+        position_text = ""
+        
+        if open_positions:
+            # Показываем каждую открытую позицию с ПРАВИЛЬНОЙ ценой
+            for sym, pdata in open_positions.items():
+                try:
+                    # Получаем РЕАЛЬНУЮ цену этой конкретной монеты
+                    ticker = _exchange.fetch_ticker(sym)
+                    sym_price = ticker['last']
+                    
+                    entry_p = pdata.get('entry_price', 0)
+                    pos_side = pdata.get('side', 'long')
+                    
+                    if entry_p and entry_p > 0:
+                        if pos_side == 'short':
+                            pnl_pct = ((entry_p - sym_price) / entry_p) * 100
+                        else:
+                            pnl_pct = ((sym_price - entry_p) / entry_p) * 100
+                        pnl_icon = '📈' if pnl_pct > 0 else '📉'
+                    else:
+                        pnl_pct = 0
+                        pnl_icon = '⚪'
+                    
+                    position_text += f"""
+<b>📍 {sym}</b> ({pos_side})
+  Вход: ${entry_p:.8f}
+  Текущая: ${sym_price:.8f}
+  <b>P&L: {pnl_pct:+.2f}%</b> {pnl_icon}
+  TP: {tp}% | SL: -{sl}%"""
+                except Exception as e:
+                    position_text += f"\n<b>📍 {sym}</b> — ⚠️ {e}"
+            
+            # Ансамбль прогноз (общий)
+            try:
+                from ensemble_predictor import ensemble_predictor
+                ensemble = ensemble_predictor.get_ensemble_prediction()
+                ai_direction = ensemble.get('direction', '—') if ensemble else '—'
+                ai_confidence = ensemble.get('confidence', 0) if ensemble else 0
+                ai_price = ensemble.get('ensemble_price', 0) if ensemble else 0
+                
+                if ai_price and ai_price > 0:
+                    position_text += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>🧠 ИИ-ансамбль:</b>
+  Направление: {ai_direction}
+  Уверенность: {ai_confidence:.0%}
+  Прогноз цены: ${ai_price:.8f}"""
+            except:
+                pass
+        
+        else:
+            # Нет позиций — показываем ИИ-анализ для входа
+            position_text = "<b>📍 Позиция:</b> НЕТ (ищу вход)"
+            
+            try:
+                from ensemble_predictor import ensemble_predictor
+                ensemble = ensemble_predictor.get_ensemble_prediction()
+                ai_direction = ensemble.get('direction', '—') if ensemble else '—'
+                ai_confidence = ensemble.get('confidence', 0) if ensemble else 0
+                ai_price = ensemble.get('ensemble_price', 0) if ensemble else 0
+                
+                if ai_price and ai_price > 0:
+                    position_text += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>🧠 ИИ-ансамбль:</b>
+  Направление: {ai_direction}
+  Уверенность: {ai_confidence:.0%}
+  Прогноз цены: ${ai_price:.8f}"""
+            except:
+                pass
+        
+        # Мультимонетный статус
+        from fully_autonomous_trader import fully_autonomous_trader
+        open_positions = fully_autonomous_trader.positions
+        max_coins = fully_autonomous_trader.max_coins
+        last_analysis = fully_autonomous_trader.last_analysis
+        
+        multi_text = f"\n<b>🪙 Монеты:</b> {len(open_positions)}/{max_coins} слотов"
+        if open_positions:
+            for sym, pdata in open_positions.items():
+                ep = pdata.get('entry_price', 0)
+                multi_text += f"\n  • {sym} @ ${ep:.6f}"
+        
+        # Показываем ИИ-анализ по ВСЕМ анализируемым монетам
+        if last_analysis:
+            multi_text += f"\n\n<b>🔍 ИИ-анализ монет:</b>"
+            for sym, analysis in last_analysis.items():
+                conf = analysis.get('confidence', 0)
+                direction = analysis.get('direction', '—')
+                threshold = analysis.get('entry_threshold', 45)
+                is_buy = analysis.get('is_good_to_buy', False)
+                is_short = analysis.get('is_good_to_short', False)
+                
+                bar = '█' * (conf // 10) + '░' * (10 - conf // 10)
+                
+                if is_buy:
+                    status = "✅ LONG"
+                elif is_short:
+                    status = "🔴 SHORT"
+                else:
+                    status = "⏳ ЖДЁМ"
+                
+                multi_text += f"\n\n  <b>{sym}</b>"
+                multi_text += f"\n  [{bar}] {conf}%/{threshold}%"
+                multi_text += f"\n  {status} | {direction}"
+                
+                reasons = analysis.get('reasons', [])
+                for r in reasons[:3]:
+                    multi_text += f"\n  {r}"
         
         msg = f"""<b>📊 Статус торговли</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -529,11 +662,13 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>Тип:</b> {trading_text}
 <b>Стратегия:</b> {strategy_name}
 <b>Пара:</b> {current_symbol}
+<b>Плечо:</b> {strategy_leverage}x
 <b>Торговля:</b> {'✅ ВКЛЮЧЕНА' if TRADING_STATE['enabled'] else '⏸️ НА ПАУЗЕ'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 <b>💰 Баланс:</b>
   Всего: ${total:.2f}
   Свободно: ${free:.2f}
+{multi_text}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {position_text}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -543,6 +678,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Баланс"""
     try:
@@ -562,11 +698,13 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+@authorized_only
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Пауза"""
     TRADING_STATE['enabled'] = False
     await update.message.reply_text("⏸️ <b>Торговля остановлена</b>", parse_mode='HTML')
 
+@authorized_only
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возобновить"""
     TRADING_STATE['enabled'] = True
