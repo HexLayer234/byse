@@ -14,6 +14,7 @@ from telegram_utils import send_telegram_message
 from trade_database import trade_db
 from mode_manager import mode_manager
 from strategy_manager import strategy_manager
+from trailing_stop import trailing_stop_manager
 import config
 
 logger = logging.getLogger(__name__)
@@ -168,26 +169,42 @@ class FullyAutonomousTrader:
                         if entry and entry > 0:
                             profit_pct = ((current_price - entry) / entry) * 100
                             
+                            # Обновляем trailing stop
+                            trailing_stop_manager.update_trailing_stop(config.SYMBOL, current_price)
+                            ts_stats = trailing_stop_manager.get_stats(config.SYMBOL)
+                            ts_info = f" | Trail: ${ts_stats['trailing_stop']:.8f}" if ts_stats else ""
+                            
                             logger.info(
                                 f"📍 Позиция: {side} {size:.4f} | "
                                 f"Вход: ${entry:.8f} | "
                                 f"Текущая: ${current_price:.8f} | "
-                                f"P&L: {profit_pct:+.2f}% (${upnl:+.4f})"
+                                f"P&L: {profit_pct:+.2f}% (${upnl:+.4f}){ts_info}"
                             )
                             
-                            exit_conditions = smart_signal_generator.analyze_exit_conditions(
-                                config.SYMBOL, entry, current_price
-                            )
-                            
-                            if exit_conditions['should_exit']:
-                                if exit_conditions['exit_percent'] == 100:
-                                    await self._execute_exit(current_price, size, exit_conditions['exit_type'])
-                                    self.current_position = None
-                                    self.entry_price = None
-                                    self.entry_time = None
-                                else:
-                                    exit_amount = size * (exit_conditions['exit_percent'] / 100)
-                                    await self._execute_partial_exit(current_price, exit_amount, exit_conditions['exit_type'])
+                            # Проверяем trailing stop — если сработал, выходим
+                            if ts_stats and ts_stats['status'] == 'СРАБОТАЛ':
+                                logger.warning(f"📉 Trailing stop сработал для {config.SYMBOL}!")
+                                await self._execute_exit(current_price, size, 'TRAILING_STOP')
+                                trailing_stop_manager.remove_position(config.SYMBOL)
+                                self.current_position = None
+                                self.entry_price = None
+                                self.entry_time = None
+                            else:
+                                # Стандартная проверка условий выхода
+                                exit_conditions = smart_signal_generator.analyze_exit_conditions(
+                                    config.SYMBOL, entry, current_price
+                                )
+                                
+                                if exit_conditions['should_exit']:
+                                    if exit_conditions['exit_percent'] == 100:
+                                        await self._execute_exit(current_price, size, exit_conditions['exit_type'])
+                                        trailing_stop_manager.remove_position(config.SYMBOL)
+                                        self.current_position = None
+                                        self.entry_price = None
+                                        self.entry_time = None
+                                    else:
+                                        exit_amount = size * (exit_conditions['exit_percent'] / 100)
+                                        await self._execute_partial_exit(current_price, exit_amount, exit_conditions['exit_type'])
                         else:
                             logger.warning(
                                 f"⚠️ Позиция открыта ({side} {size:.4f}) но нет цены входа! "
@@ -233,6 +250,9 @@ class FullyAutonomousTrader:
                         self.entry_time = datetime.now()
                         self.current_position = True
                         self.consecutive_waits = 0
+                        
+                        # Регистрируем trailing stop для новой позиции
+                        trailing_stop_manager.register_position(config.SYMBOL, entry_conditions['entry_price'])
                     else:
                         self.consecutive_waits += 1
                         logger.info(

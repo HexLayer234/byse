@@ -129,7 +129,10 @@ class RiskManager:
         return drawdown_percent
     
     def log_trade(self, symbol, side, entry_price, exit_price, amount, pnl, duration):
-        """Логирование сделки для статистики"""
+        """Логирование сделки — в память И в БД"""
+        from datetime import datetime
+        from trade_database import trade_db
+        
         trade = {
             'symbol': symbol,
             'side': side,
@@ -141,13 +144,40 @@ class RiskManager:
             'timestamp': pd.Timestamp.now()
         }
         self.trades_history.append(trade)
+        
+        # Дублируем в БД чтобы не терять при перезапуске
+        try:
+            now = datetime.now()
+            trade_db.log_trade(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                amount=amount,
+                pnl=pnl,
+                entry_time=now,
+                exit_time=now,
+                reason='RISK_MANAGER',
+                notes=f"duration={duration}s"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось сохранить сделку в БД: {e}")
+        
         logger.info(
             f"📝 Сделка залогирована: {side} {amount:.4f} {symbol} @ "
             f"${entry_price:.8f} → ${exit_price:.8f} = ${pnl:.2f}"
         )
     
-    def get_statistics(self):
-        """Расчёт статистики сделок"""
+    def get_statistics(self, symbol=None, days=14):
+        """Расчёт статистики — сначала из БД, потом из памяти"""
+        from trade_database import trade_db
+        
+        # Пробуем получить из БД (переживает перезапуски)
+        db_stats = trade_db.get_statistics(symbol=symbol, days=days)
+        if db_stats and db_stats['total_trades'] > 0:
+            return db_stats
+        
+        # Фолбэк — данные из памяти
         if not self.trades_history:
             logger.warning("⚠️ Нет сделок в истории")
             return None
