@@ -222,20 +222,31 @@ class SmartSignalGenerator:
                 'entry_price': None
             }
     
-    def analyze_exit_conditions(self, symbol, entry_price, current_price):
+    def analyze_exit_conditions(self, symbol, entry_price, current_price, side='Buy'):
         """
         Анализирует условия для ВЫХОДА из позиции
         Использует параметры текущей стратегии
+        Теперь поддерживает как LONG так и SHORT позиции
+
+        Args:
+            symbol: торговая пара
+            entry_price: цена входа в позицию
+            current_price: текущая цена
+            side: направление позиции ('Buy' для LONG, 'Sell' для SHORT)
         """
         try:
-            profit_percent = ((current_price - entry_price) / entry_price) * 100
-            
+            # ✅ ПРАВИЛЬНЫЙ РАСЧЕТ ДЛЯ LONG И SHORT
+            if side == 'Buy':  # LONG позиция
+                profit_percent = ((current_price - entry_price) / entry_price) * 100
+            else:  # SHORT позиция (side == 'Sell')
+                profit_percent = ((entry_price - current_price) / entry_price) * 100
+
             # Получаем параметры из текущей стратегии
             from strategy_manager import strategy_manager
             strategy = strategy_manager.STRATEGIES[strategy_manager.current_strategy]
             tp = strategy['take_profit']
             sl = strategy['stop_loss']
-            
+
             exit_signal = {
                 'should_exit': False,
                 'exit_type': None,

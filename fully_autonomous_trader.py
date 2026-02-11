@@ -29,6 +29,7 @@ class FullyAutonomousTrader:
         self.last_coin_change_time = 0
         self.price_history = []
         self.consecutive_waits = 0
+        self.short_warning_sent = False  # Флаг для отправки предупреждения один раз
     
     async def autonomous_trading_cycle(self):
         """Основной цикл с автоматической сменой стратегий"""
@@ -156,7 +157,26 @@ class FullyAutonomousTrader:
                 if self.current_position and size > 0:
                     # === ПОЗИЦИЯ ОТКРЫТА — ПРОВЕРЯЕМ ВЫХОД ===
                     self.consecutive_waits = 0
-                    
+
+                    # ⚠️ ПРОВЕРКА: ЕСЛИ ЭТО SHORT ПОЗИЦИЯ - ПРЕДУПРЕЖДАЕМ (один раз)
+                    if side == 'Sell' and not self.short_warning_sent:
+                        logger.warning(
+                            f"⚠️ ВНИМАНИЕ! Обнаружена SHORT позиция {size:.4f}! "
+                            f"Бот не открывает SHORT позиции самостоятельно. "
+                            f"Это могло произойти из-за ручного вмешательства или ошибки."
+                        )
+                        msg = f"""⚠️ <b>ВНИМАНИЕ: SHORT ПОЗИЦИЯ</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Обнаружена SHORT позиция на {config.SYMBOL}
+Размер: {size:.4f}
+
+❗ Бот НЕ открывает SHORT позиции самостоятельно!
+❗ Возможно, позиция открыта вручную или ошибкой
+
+🔍 Мониторю выход по стоп-лоссу и тейк-профиту"""
+                        send_telegram_message(msg)
+                        self.short_warning_sent = True
+
                     df = fetch_ohlcv_df()
                     if df is not None and len(df) > 0:
                         current_price = df['close'].iloc[-1]
@@ -164,10 +184,14 @@ class FullyAutonomousTrader:
                         # Определяем цену входа
                         # Приоритет: self.entry_price > avg_price из биржи
                         entry = self.entry_price if self.entry_price and self.entry_price > 0 else avg_price
-                        
+
                         if entry and entry > 0:
-                            profit_pct = ((current_price - entry) / entry) * 100
-                            
+                            # ✅ ПРАВИЛЬНЫЙ РАСЧЕТ ДЛЯ LONG И SHORT
+                            if side == 'Buy':  # LONG позиция
+                                profit_pct = ((current_price - entry) / entry) * 100
+                            else:  # SHORT позиция (side == 'Sell')
+                                profit_pct = ((entry - current_price) / entry) * 100
+
                             logger.info(
                                 f"📍 Позиция: {side} {size:.4f} | "
                                 f"Вход: ${entry:.8f} | "
@@ -176,7 +200,7 @@ class FullyAutonomousTrader:
                             )
                             
                             exit_conditions = smart_signal_generator.analyze_exit_conditions(
-                                config.SYMBOL, entry, current_price
+                                config.SYMBOL, entry, current_price, side
                             )
                             
                             if exit_conditions['should_exit']:
@@ -185,6 +209,7 @@ class FullyAutonomousTrader:
                                     self.current_position = None
                                     self.entry_price = None
                                     self.entry_time = None
+                                    self.short_warning_sent = False  # Сброс флага при выходе
                                 else:
                                     exit_amount = size * (exit_conditions['exit_percent'] / 100)
                                     await self._execute_partial_exit(current_price, exit_amount, exit_conditions['exit_type'])
@@ -328,11 +353,18 @@ class FullyAutonomousTrader:
         try:
             logger.info(f"💔 ВЫХОД ({exit_type}): {config.SYMBOL} @ ${price:.8f}")
             order = place_sell()
-            
+
             profit = 0
             if self.entry_price and self.entry_price > 0:
-                profit = (price - self.entry_price) / self.entry_price * 100
-            
+                # Получаем сторону позиции из биржи
+                size, side, _, _ = get_position()
+
+                # ✅ ПРАВИЛЬНЫЙ РАСЧЕТ ДЛЯ LONG И SHORT
+                if side == 'Buy':  # LONG позиция
+                    profit = (price - self.entry_price) / self.entry_price * 100
+                else:  # SHORT позиция (side == 'Sell')
+                    profit = (self.entry_price - price) / self.entry_price * 100
+
             if order:
                 msg = f"""🔴 <b>АВТОМАТИЧЕСКИЙ ВЫХОД</b>
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -399,13 +431,21 @@ class FullyAutonomousTrader:
         try:
             free, total = get_balance_usdt()
             size, side, avg, upnl = get_position()
-            
+
             mode_text = "🤖 АВТОНОМНЫЙ" if mode_manager.is_autonomous_mode() else "🎮 РУЧНОЙ"
             strategy_text = strategy_manager.STRATEGIES[strategy_manager.current_strategy]['name']
-            
+
             entry = self.entry_price if self.entry_price else avg
-            profit_pct = ((avg - entry) / entry * 100) if entry and entry > 0 and size > 0 else 0
-            
+
+            # ✅ ПРАВИЛЬНЫЙ РАСЧЕТ ДЛЯ LONG И SHORT
+            if entry and entry > 0 and size > 0:
+                if side == 'Buy':  # LONG позиция
+                    profit_pct = ((avg - entry) / entry * 100)
+                else:  # SHORT позиция (side == 'Sell')
+                    profit_pct = ((entry - avg) / entry * 100)
+            else:
+                profit_pct = 0
+
             return f"""
 ╔════════════════════════════════════════════════════════════╗
 ║           📊 СТАТУС ТРЕЙДЕРА                               ║
