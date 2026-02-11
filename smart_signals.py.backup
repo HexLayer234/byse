@@ -222,35 +222,20 @@ class SmartSignalGenerator:
                 'entry_price': None
             }
     
-    def analyze_exit_conditions(self, symbol, entry_price, current_price, side='Buy'):
+    def analyze_exit_conditions(self, symbol, entry_price, current_price):
         """
         Анализирует условия для ВЫХОДА из позиции
         Использует параметры текущей стратегии
-
-        Args:
-            symbol: торговая пара
-            entry_price: цена входа
-            current_price: текущая цена
-            side: направление позиции ('Buy' для LONG, 'Sell' для SHORT)
         """
         try:
-            # Рассчитываем прибыль с учётом направления позиции
-            if side == 'Buy':
-                # LONG: прибыль когда цена растёт
-                profit_percent = ((current_price - entry_price) / entry_price) * 100
-            elif side == 'Sell':
-                # SHORT: прибыль когда цена падает
-                profit_percent = ((entry_price - current_price) / entry_price) * 100
-            else:
-                logger.error(f"❌ Неизвестное направление позиции: {side}")
-                profit_percent = 0
-
+            profit_percent = ((current_price - entry_price) / entry_price) * 100
+            
             # Получаем параметры из текущей стратегии
             from strategy_manager import strategy_manager
             strategy = strategy_manager.STRATEGIES[strategy_manager.current_strategy]
             tp = strategy['take_profit']
             sl = strategy['stop_loss']
-
+            
             exit_signal = {
                 'should_exit': False,
                 'exit_type': None,
@@ -258,51 +243,44 @@ class SmartSignalGenerator:
                 'profit_percent': profit_percent,
                 'reason': None
             }
-
+            
             # 1. ПОЛНЫЙ Take Profit
             if profit_percent >= tp:
                 exit_signal['should_exit'] = True
                 exit_signal['exit_type'] = 'TAKE_PROFIT'
                 exit_signal['exit_percent'] = 100
                 exit_signal['reason'] = f"🟢 TAKE PROFIT: +{profit_percent:.2f}% (цель {tp}%)"
-
+            
             # 2. ЧАСТИЧНЫЙ ВЫХОД — 50% позиции при 60% от TP
             elif profit_percent >= tp * 0.6:
                 exit_signal['should_exit'] = True
                 exit_signal['exit_type'] = 'PARTIAL_EXIT'
                 exit_signal['exit_percent'] = 50
                 exit_signal['reason'] = f"⚪ ЧАСТИЧНЫЙ ВЫХОД 50%: +{profit_percent:.2f}% (60% от TP)"
-
-            # 3. ТРЕЙЛИНГ — при 40% от TP проверяем тренд
+            
+            # 3. ТРЕЙЛИН�� — при 40% от TP проверяем тренд
             elif profit_percent >= tp * 0.4:
                 try:
                     from multiframe_analysis import create_mtf_analyzer
                     mtf = create_mtf_analyzer(symbol)
                     mtf_results = mtf.run_multiframe_analysis()
                     mtf_score, _ = mtf.get_consensus_signal(mtf_results)
-
-                    # Для LONG: выходим если тренд стал медвежьим
-                    # Для SHORT: выходим если тренд стал бычьим
-                    if side == 'Buy' and mtf_score < 0.3:
+                    
+                    if mtf_score < 0.3:
                         exit_signal['should_exit'] = True
                         exit_signal['exit_type'] = 'TREND_END'
                         exit_signal['exit_percent'] = 30
-                        exit_signal['reason'] = f"⚪ LONG: ТРЕНД УГАСАЕТ: +{profit_percent:.2f}%"
-                    elif side == 'Sell' and mtf_score > -0.3:
-                        exit_signal['should_exit'] = True
-                        exit_signal['exit_type'] = 'TREND_END'
-                        exit_signal['exit_percent'] = 30
-                        exit_signal['reason'] = f"⚪ SHORT: ТРЕНД УГАСАЕТ: +{profit_percent:.2f}%"
+                        exit_signal['reason'] = f"⚪ ТРЕНД УГАСАЕТ: +{profit_percent:.2f}%"
                 except:
                     pass
-
+            
             # 4. Stop Loss
             if profit_percent <= -sl:
                 exit_signal['should_exit'] = True
                 exit_signal['exit_type'] = 'STOP_LOSS'
                 exit_signal['exit_percent'] = 100
                 exit_signal['reason'] = f"🔴 СТОП-ЛОСС: {profit_percent:.2f}% (лимит -{sl}%)"
-
+            
             # 5. ТРЕЙЛИНГ стоп: если было +2% и упало до +0.5% — выходим
             elif profit_percent >= 0.5 and profit_percent < tp * 0.3:
                 # Маленькая прибыль и не растёт — лучше зафиксировать
@@ -311,41 +289,30 @@ class SmartSignalGenerator:
                     df = fetch_ohlcv_df()
                     if df is not None and len(df) >= 5:
                         recent_closes = df['close'].tail(5).tolist()
-
-                        # Для LONG: проверяем падение цены
-                        # Для SHORT: проверяем рост цены
-                        if side == 'Buy':
-                            falling = all(recent_closes[i] >= recent_closes[i+1] for i in range(len(recent_closes)-1))
-                            if falling:
-                                exit_signal['should_exit'] = True
-                                exit_signal['exit_type'] = 'TRAILING_STOP'
-                                exit_signal['exit_percent'] = 100
-                                exit_signal['reason'] = f"📉 LONG ТРЕЙЛИНГ: прибыль тает +{profit_percent:.2f}%, цена падает"
-                        elif side == 'Sell':
-                            rising = all(recent_closes[i] <= recent_closes[i+1] for i in range(len(recent_closes)-1))
-                            if rising:
-                                exit_signal['should_exit'] = True
-                                exit_signal['exit_type'] = 'TRAILING_STOP'
-                                exit_signal['exit_percent'] = 100
-                                exit_signal['reason'] = f"📈 SHORT ТРЕЙЛИНГ: прибыль тает +{profit_percent:.2f}%, цена растёт"
+                        # Цена падает последние 5 свечей
+                        falling = all(recent_closes[i] >= recent_closes[i+1] for i in range(len(recent_closes)-1))
+                        if falling:
+                            exit_signal['should_exit'] = True
+                            exit_signal['exit_type'] = 'TRAILING_STOP'
+                            exit_signal['exit_percent'] = 100
+                            exit_signal['reason'] = f"📉 ТРЕЙЛИНГ: прибыль тает +{profit_percent:.2f}%, цена падает"
                 except:
                     pass
-
+            
             if exit_signal['should_exit']:
                 logger.info(
-                    f"📊 Сигнал выхода для {symbol} ({side}):\n"
+                    f"📊 Сигнал выхода для {symbol}:\n"
                     f"   Тип: {exit_signal['exit_type']}\n"
                     f"   Прибыль: {profit_percent:+.2f}%\n"
                     f"   Выход: {exit_signal['exit_percent']}%\n"
                     f"   Причина: {exit_signal['reason']}"
                 )
-
+            
             return exit_signal
-
+        
         except Exception as e:
             logger.error(f"❌ Ошибка анализа выхода: {e}")
             return {'should_exit': False}
-
 
 
 smart_signal_generator = SmartSignalGenerator()

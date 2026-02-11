@@ -118,23 +118,26 @@ def get_position(symbol=None):
         from config import SYMBOL, MODE
         if MODE != 'futures':
             return 0, None, 0, 0
-        
-        clean_symbol = SYMBOL.replace('/', '').replace(':USDT', '')
+
+        # Используем переданный symbol, если есть, иначе SYMBOL из config
+        symbol_to_use = symbol if symbol else SYMBOL
+        clean_symbol = symbol_to_use.replace('/', '').replace(':USDT', '')
+
         response = exchange.private_get_v5_position_list({
             'category': 'linear',
             'symbol': clean_symbol,
         })
-        
+
         positions = response.get('result', {}).get('list', [])
         if not positions:
             return 0, None, 0, 0
-        
+
         pos = positions[0]
         size = safe_float(pos.get('size', 0))
         side = pos.get('side', None)
         avg_price = safe_float(pos.get('avgPrice', 0))
         upnl = safe_float(pos.get('unrealisedPnl', 0))
-        
+
         return size, side, avg_price, upnl
     except Exception as e:
         logging.error(f"❌ Position fetch error: {e}")

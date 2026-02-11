@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime
 from config import MODE
 from exchange import get_balance_usdt, get_position, fetch_ohlcv_df
-from trading_logic import place_buy, place_sell
+from trading_logic import place_buy, place_sell, place_short, place_close_short, calculate_profit_pct
 from auto_balance_manager import auto_balance_manager
 from smart_signals import smart_signal_generator
 from telegram_utils import send_telegram_message
@@ -164,10 +164,11 @@ class FullyAutonomousTrader:
                         # Определяем цену входа
                         # Приоритет: self.entry_price > avg_price из биржи
                         entry = self.entry_price if self.entry_price and self.entry_price > 0 else avg_price
-                        
+
                         if entry and entry > 0:
-                            profit_pct = ((current_price - entry) / entry) * 100
-                            
+                            # ИСПРАВЛЕНО: используем calculate_profit_pct с учётом направления позиции
+                            profit_pct = calculate_profit_pct(entry, current_price, side)
+
                             logger.info(
                                 f"📍 Позиция: {side} {size:.4f} | "
                                 f"Вход: ${entry:.8f} | "
@@ -176,18 +177,18 @@ class FullyAutonomousTrader:
                             )
                             
                             exit_conditions = smart_signal_generator.analyze_exit_conditions(
-                                config.SYMBOL, entry, current_price
+                                config.SYMBOL, entry, current_price, side
                             )
-                            
+
                             if exit_conditions['should_exit']:
                                 if exit_conditions['exit_percent'] == 100:
-                                    await self._execute_exit(current_price, size, exit_conditions['exit_type'])
+                                    await self._execute_exit(current_price, size, exit_conditions['exit_type'], side)
                                     self.current_position = None
                                     self.entry_price = None
                                     self.entry_time = None
                                 else:
                                     exit_amount = size * (exit_conditions['exit_percent'] / 100)
-                                    await self._execute_partial_exit(current_price, exit_amount, exit_conditions['exit_type'])
+                                    await self._execute_partial_exit(current_price, exit_amount, exit_conditions['exit_type'], side)
                         else:
                             logger.warning(
                                 f"⚠️ Позиция открыта ({side} {size:.4f}) но нет цены входа! "
@@ -323,20 +324,32 @@ class FullyAutonomousTrader:
         except Exception as e:
             logger.error(f"❌ Ошибка входа: {e}")
     
-    async def _execute_exit(self, price, amount, exit_type):
+    async def _execute_exit(self, price, amount, exit_type, side):
         """Выполняет выход"""
         try:
-            logger.info(f"💔 ВЫХОД ({exit_type}): {config.SYMBOL} @ ${price:.8f}")
-            order = place_sell()
-            
+            logger.info(f"💔 ВЫХОД ({exit_type}): {config.SYMBOL} {side} @ ${price:.8f}")
+
+            # Выбираем правильную функцию в зависимости от направления позиции
+            if side == 'Buy':
+                # Закрытие LONG позиции
+                order = place_sell()
+            elif side == 'Sell':
+                # Закрытие SHORT позиции
+                order = place_close_short()
+            else:
+                logger.error(f"❌ Неизвестное направление позиции: {side}")
+                return
+
             profit = 0
             if self.entry_price and self.entry_price > 0:
-                profit = (price - self.entry_price) / self.entry_price * 100
-            
+                # Используем правильную формулу для расчёта прибыли
+                profit = calculate_profit_pct(self.entry_price, price, side)
+
             if order:
                 msg = f"""🔴 <b>АВТОМАТИЧЕСКИЙ ВЫХОД</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 Пара: {config.SYMBOL}
+Направление: {side}
 Тип: {exit_type}
 Цена входа: ${self.entry_price:.8f if self.entry_price else 0:.8f}
 Цена выхода: ${price:.8f}
@@ -344,35 +357,45 @@ class FullyAutonomousTrader:
 Время: {datetime.now().strftime('%H:%M:%S')}"""
                 send_telegram_message(msg)
             else:
-                logger.error("❌ Ордер на продажу не исполнен!")
+                logger.error("❌ Ордер на закрытие не исполнен!")
         except Exception as e:
             logger.error(f"❌ Ошибка выхода: {e}")
     
-    async def _execute_partial_exit(self, price, amount, exit_type):
+    async def _execute_partial_exit(self, price, amount, exit_type, side):
         """Выполняет частичный выход"""
         try:
-            logger.info(f"⚪ ЧАСТИЧНЫЙ ВЫХОД ({exit_type}): {amount:.4f} @ ${price:.8f}")
-            
+            logger.info(f"⚪ ЧАСТИЧНЫЙ ВЫХОД ({exit_type}): {side} {amount:.4f} @ ${price:.8f}")
+
             # Для частичного выхода передаём конкретное количество
             from state_manager import state_manager
             symbol = state_manager.get_symbol()
-            
+
             market_info = exchange.market(symbol)
             precision = market_info['precision']['amount']
-            
+
             if isinstance(precision, float) and precision < 1:
                 import math
                 decimal_places = max(0, -int(math.floor(math.log10(precision))))
                 amount = round(amount, decimal_places)
             else:
                 amount = round(amount, int(precision))
-            
+
+            # Выбираем правильную операцию в зависимости от направления
             from exchange import exchange
-            order = exchange.create_market_sell_order(symbol=symbol, amount=amount)
-            
+            if side == 'Buy':
+                # Частичное закрытие LONG = продажа части
+                order = exchange.create_market_sell_order(symbol=symbol, amount=amount)
+            elif side == 'Sell':
+                # Частичное закрытие SHORT = покупка части
+                order = exchange.create_market_buy_order(symbol=symbol, amount=amount)
+            else:
+                logger.error(f"❌ Неизвестное направление позиции: {side}")
+                return
+
             if order:
                 msg = f"""⚪ <b>ЧАСТИЧНЫЙ ВЫХОД</b>
 ━━━━━━━━━━━━━━━━━━━━━━
+Направление: {side}
 Тип: {exit_type}
 Количество: {amount:.4f}
 Цена: ${price:.8f}
@@ -399,13 +422,18 @@ class FullyAutonomousTrader:
         try:
             free, total = get_balance_usdt()
             size, side, avg, upnl = get_position()
-            
+
             mode_text = "🤖 АВТОНОМНЫЙ" if mode_manager.is_autonomous_mode() else "🎮 РУЧНОЙ"
             strategy_text = strategy_manager.STRATEGIES[strategy_manager.current_strategy]['name']
-            
+
             entry = self.entry_price if self.entry_price else avg
-            profit_pct = ((avg - entry) / entry * 100) if entry and entry > 0 and size > 0 else 0
-            
+
+            # ИСПРАВЛЕНО: используем правильную формулу в зависимости от направления
+            if entry and entry > 0 and size > 0 and side:
+                profit_pct = calculate_profit_pct(entry, avg, side)
+            else:
+                profit_pct = 0
+
             return f"""
 ╔════════════════════════════════════════════════════════════╗
 ║           📊 СТАТУС ТРЕЙДЕРА                               ║
