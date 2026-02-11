@@ -501,17 +501,20 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Позиция с деталями
         if size > 0 and avg > 0:
             from exchange import fetch_ohlcv_df
+            from trading_logic import calculate_profit_pct
             df = fetch_ohlcv_df()
             current_price = df['close'].iloc[-1] if df is not None and len(df) > 0 else avg
-            profit_pct = ((current_price - avg) / avg) * 100
+
+            # ИСПРАВЛЕНО: используем правильную формулу в зависимости от направления
+            profit_pct = calculate_profit_pct(avg, current_price, side)
             position_value = size * current_price
-            
+
             position_text = f"""<b>📍 Позиция:</b> {side} {size:.4f}
   Цена входа: ${avg:.8f}
   Текущая цена: ${current_price:.8f}
   Размер: ${position_value:.2f}
   <b>P&L: {profit_pct:+.2f}% (${upnl:+.4f})</b>"""
-            
+
             if profit_pct > 0:
                 position_text += "\n  📈 В ПРИБЫЛИ"
             else:

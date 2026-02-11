@@ -81,10 +81,10 @@ def place_buy(price=None, amount=None):
         return None
 
 def place_sell(price=None, amount=None):
-    """РЕАЛЬНАЯ продажа на бирже"""
+    """РЕАЛЬНАЯ продажа на бирже (закрытие LONG позиции)"""
     try:
         symbol = state_manager.get_symbol()
-        
+
         # Если amount не указан — закрываем всю позицию
         if amount is None:
             size, side, avg_price, upnl = get_position(symbol)
@@ -99,11 +99,11 @@ def place_sell(price=None, amount=None):
                 ticker = exchange.fetch_ticker(symbol)
                 price = ticker['last']
                 quantity = float(amount) / price
-        
+
         # Округляем по точности биржи
         market_info = exchange.market(symbol)
         precision = market_info['precision']['amount']
-        
+
         if isinstance(precision, float):
             if precision < 1:
                 import math
@@ -113,22 +113,167 @@ def place_sell(price=None, amount=None):
                 quantity = round(quantity, int(precision))
         else:
             quantity = round(quantity, int(precision))
-        
-        logger.info(f"💔 ПРОДАЖА: {quantity} {symbol} @ ${price:.8f}")
-        
+
+        logger.info(f"💔 ПРОДАЖА (ЗАКРЫТИЕ LONG): {quantity} {symbol} @ ${price:.8f}")
+
         # РЕАЛЬНЫЙ ОРДЕР
         order = exchange.create_market_sell_order(
             symbol=symbol,
             amount=quantity
         )
-        
+
         logger.info(f"✅ Ордер исполнен: ID {order['id']}")
-        
+
         return order
-        
+
     except Exception as e:
         logger.error(f"❌ Ошибка продажи: {e}")
         return None
+
+def place_short(price=None, amount=None):
+    """ОТКРЫТИЕ SHORT ПОЗИЦИИ (продажа для шорта)"""
+    try:
+        from mode_manager import mode_manager
+        import config
+
+        symbol = state_manager.get_symbol()
+
+        if amount is None:
+            amount = config.BASE_AMOUNT
+
+        # Получаем текущую цену
+        if price:
+            current_price = price
+        else:
+            ticker = exchange.fetch_ticker(symbol)
+            current_price = ticker['last']
+
+        # Рассчитываем количество монет
+        quantity = float(amount) / current_price
+
+        # Округляем по точности биржи
+        market_info = exchange.market(symbol)
+        precision = market_info['precision']['amount']
+
+        if isinstance(precision, float):
+            if precision < 1:
+                import math
+                decimal_places = max(0, -int(math.floor(math.log10(precision))))
+                quantity = round(quantity, decimal_places)
+            else:
+                quantity = round(quantity, int(precision))
+        else:
+            quantity = round(quantity, int(precision))
+
+        # Проверяем минимальный размер ордера
+        min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 0)
+        if min_amount and quantity < min_amount:
+            logger.warning(f"⚠️ Количество {quantity} меньше минимума {min_amount}, увеличиваю")
+            quantity = min_amount
+
+        logger.info(f"🔴 SHORT (ПРОДАЖА): {quantity} {symbol} @ ${current_price:.8f} (сумма: ${float(amount):.2f})")
+
+        # РЕАЛЬНЫЙ ОРДЕР - Продажа для открытия SHORT
+        order = exchange.create_market_sell_order(
+            symbol=symbol,
+            amount=quantity
+        )
+
+        logger.info(f"✅ SHORT ордер исполнен: ID {order['id']}")
+
+        # Сохраняем в БД
+        trade_db.log_trade(
+            symbol=symbol,
+            side='short',
+            entry_price=current_price,
+            amount=quantity,
+            entry_time=datetime.now(),
+            notes=f"SHORT Order ID: {order['id']}"
+        )
+
+        return order
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка открытия SHORT: {e}")
+        return None
+
+def place_close_short(price=None, amount=None):
+    """ЗАКРЫТИЕ SHORT ПОЗИЦИИ (покупка для закрытия шорта)"""
+    try:
+        symbol = state_manager.get_symbol()
+
+        # Если amount не указан — закрываем всю позицию
+        if amount is None:
+            size, side, avg_price, upnl = get_position(symbol)
+            if size == 0:
+                logger.warning("⚠️ Нет позиции для закрытия")
+                return None
+            if side != 'Sell':
+                logger.warning(f"⚠️ Позиция не SHORT (side={side})")
+                return None
+            quantity = size
+        else:
+            if price and price > 0:
+                quantity = float(amount) / price
+            else:
+                ticker = exchange.fetch_ticker(symbol)
+                price = ticker['last']
+                quantity = float(amount) / price
+
+        # Округляем по точности биржи
+        market_info = exchange.market(symbol)
+        precision = market_info['precision']['amount']
+
+        if isinstance(precision, float):
+            if precision < 1:
+                import math
+                decimal_places = max(0, -int(math.floor(math.log10(precision))))
+                quantity = round(quantity, decimal_places)
+            else:
+                quantity = round(quantity, int(precision))
+        else:
+            quantity = round(quantity, int(precision))
+
+        logger.info(f"💚 ПОКУПКА (ЗАКРЫТИЕ SHORT): {quantity} {symbol} @ ${price:.8f}")
+
+        # РЕАЛЬНЫЙ ОРДЕР - Покупка для закрытия SHORT
+        order = exchange.create_market_buy_order(
+            symbol=symbol,
+            amount=quantity
+        )
+
+        logger.info(f"✅ Ордер закрытия SHORT исполнен: ID {order['id']}")
+
+        return order
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка закрытия SHORT: {e}")
+        return None
+
+def calculate_profit_pct(entry_price, current_price, side):
+    """
+    Рассчитывает процент прибыли с учётом направления позиции
+
+    Args:
+        entry_price: цена входа
+        current_price: текущая цена
+        side: направление ('Buy' для LONG, 'Sell' для SHORT)
+
+    Returns:
+        float: процент прибыли (может быть отрицательным)
+    """
+    if not entry_price or entry_price == 0:
+        return 0.0
+
+    if side == 'Buy':
+        # LONG: прибыль когда цена растёт
+        return ((current_price - entry_price) / entry_price) * 100
+    elif side == 'Sell':
+        # SHORT: прибыль когда цена падает
+        return ((entry_price - current_price) / entry_price) * 100
+    else:
+        logger.warning(f"⚠️ Неизвестное направление позиции: {side}")
+        return 0.0
 
 def compute_indicators(df):
     """Рассчитывает технические индикаторы"""
